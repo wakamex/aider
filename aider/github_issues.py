@@ -7,6 +7,7 @@ import datetime
 import requests
 import yaml
 import re
+import subprocess
 
 # Constants for GitHub API
 GITHUB_API_URL = "https://api.github.com"
@@ -313,12 +314,52 @@ class GitHubIssueClient:
         response.raise_for_status()
         return response.json()
 
+    def get_file_changes(self) -> Dict[str, List[str]]:
+        """Get file changes in the current branch using git.
+        
+        Returns:
+            Dict with added, modified, and deleted files
+        """
+        def run_git(args: List[str]) -> List[str]:
+            result = subprocess.run(
+                ["git"] + args,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return [line for line in result.stdout.split("\n") if line]
+        
+        try:
+            # Get files changed compared to base branch
+            changed = run_git(["diff", "--name-status", "HEAD^"])
+            
+            changes = {
+                "added": [],
+                "modified": [],
+                "deleted": []
+            }
+            
+            for line in changed:
+                status, file = line.split("\t", 1)
+                if status.startswith("A"):
+                    changes["added"].append(file)
+                elif status.startswith("M"):
+                    changes["modified"].append(file)
+                elif status.startswith("D"):
+                    changes["deleted"].append(file)
+                    
+            return changes
+            
+        except subprocess.CalledProcessError:
+            return {"added": [], "modified": [], "deleted": []}
+
     def update_pr_progress(
         self,
         owner: str,
         repo: str,
         pr_number: int,
-        changes: List[str]
+        changes: List[str],
+        include_files: bool = True
     ) -> Dict:
         """Update PR with progress information.
         
@@ -327,6 +368,7 @@ class GitHubIssueClient:
             repo: Repository name
             pr_number: PR number
             changes: List of changes made
+            include_files: Whether to include file changes
             
         Returns:
             Created comment data
@@ -344,8 +386,26 @@ class GitHubIssueClient:
         
         # Format changes
         change_list = "\n".join(f"- {change}" for change in changes)
+        body = f"{progress_header}\n\n{change_list}\n"
+        
+        # Add file changes if requested
+        if include_files:
+            file_changes = self.get_file_changes()
+            if any(file_changes.values()):
+                body += "\n### 📁 Files Changed\n"
+                if file_changes["added"]:
+                    files = "\n".join(f"- Added: `{f}`" for f in file_changes["added"])
+                    body += f"\n{files}"
+                if file_changes["modified"]:
+                    files = "\n".join(f"- Modified: `{f}`" for f in file_changes["modified"])
+                    body += f"\n{files}"
+                if file_changes["deleted"]:
+                    files = "\n".join(f"- Deleted: `{f}`" for f in file_changes["deleted"])
+                    body += f"\n{files}"
+        
+        # Add timestamp
         timestamp = "Last updated: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        body = f"{progress_header}\n\n{change_list}\n\n{timestamp}"
+        body += f"\n\n{timestamp}"
         
         # Update or create progress comment
         if progress_comment:

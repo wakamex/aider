@@ -319,6 +319,15 @@ def main(
     dump(model_metadata_files_loaded)
 
     if read_model_settings:
+        print(f"Checking model settings file: {read_model_settings}")
+        print(f"Exists: {os.path.exists(read_model_settings)}")
+        print(f"Absolute path: {os.path.abspath(read_model_settings)}")
+        print(f"File contents:")
+        try:
+            print(Path(read_model_settings).read_text())
+        except Exception as e:
+            print(f"Error reading file: {e}")
+
         try:
             files_loaded = models.register_models([read_model_settings])
             if verbose:

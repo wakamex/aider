@@ -22,9 +22,8 @@ from aider.repo import ANY_GIT_ERROR
 from aider.run_cmd import run_cmd
 from aider.scrape import Scraper, install_playwright
 from aider.utils import is_image_file
-
 from .dump import dump  # noqa: F401
-
+from .github_commands import GitHubCommands
 
 class SwitchCoder(Exception):
     def __init__(self, **kwargs):
@@ -34,6 +33,7 @@ class SwitchCoder(Exception):
 class Commands:
     voice = None
     scraper = None
+    github = None
 
     def clone(self):
         return Commands(
@@ -76,6 +76,7 @@ class Commands:
 
         self.help = None
         self.editor = editor
+        self.github = GitHubCommands(io, coder)
 
     def cmd_model(self, args):
         "Switch to a new LLM"
@@ -1450,6 +1451,80 @@ Just show me the edits I need to make.
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
+
+    def cmd_issue(self, args):
+        """Process a GitHub issue by number: /issue owner/repo#123 or /issue https://github.com/owner/repo/issues/123"""
+        if not args:
+            self.io.tool_error("Please provide an issue reference")
+            return
+
+        try:
+            # Handle URL format
+            if args.startswith(("http://", "https://")):
+                if "/issues/" not in args:
+                    self.io.tool_error("Invalid issue URL format")
+                    return
+                url, issue_number = args.rsplit("/issues/", 1)
+                self.github.process_repo_issue(url, int(issue_number))
+                return
+
+            # Handle owner/repo#number format
+            if "#" not in args:
+                self.io.tool_error("Invalid issue reference format")
+                return
+
+            repo_ref, issue_number = args.split("#", 1)
+            if "/" not in repo_ref:
+                self.io.tool_error("Invalid repository reference format")
+                return
+
+            owner, repo = repo_ref.split("/", 1)
+            self.github.process_issue(owner, repo, int(issue_number))
+
+        except ValueError as e:
+            self.io.tool_error(f"Error processing issue: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Unexpected error: {e}")
+
+    def cmd_issues(self, args):
+        """List open issues from a GitHub repository: /issues owner/repo or /issues https://github.com/owner/repo"""
+        if not args:
+            self.io.tool_error("Please provide a repository reference")
+            return
+
+        try:
+            # Initialize GitHub client if needed
+            self.github._ensure_client()
+
+            # Parse repository reference
+            if args.startswith(("http://", "https://")):
+                owner, repo = self.github.client.parse_repo_url(args)
+            else:
+                if "/" not in args:
+                    self.io.tool_error("Invalid repository reference format")
+                    return
+                owner, repo = args.split("/", 1)
+
+            # Fetch and display issues
+            issues = self.github.client.get_repo_issues(owner, repo, state="open")
+
+            if not issues:
+                self.io.tool_output("No open issues found")
+                return
+
+            self.io.tool_output(f"\nOpen issues in {owner}/{repo}:")
+            for issue in issues:
+                labels = [f"[{label['name']}]" for label in issue['labels']]
+                label_str = " ".join(labels)
+                self.io.tool_output(
+                    f"#{issue['number']} {issue['title']} {label_str}\n"
+                    f"  {issue['html_url']}"
+                )
+
+        except ValueError as e:
+            self.io.tool_error(f"Error listing issues: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Unexpected error: {e}")
 
 
 def expand_subdir(file_path):

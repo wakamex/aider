@@ -142,6 +142,156 @@ class GitHubIssueClient:
         response.raise_for_status()
         return response.json()
 
+    def create_issue_comment(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        body: str
+    ) -> Dict:
+        """Create a comment on an issue.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            issue_number: Issue number
+            body: Comment text
+            
+        Returns:
+            Created comment data
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
+        response = self.session.post(url, json={"body": body})
+        response.raise_for_status()
+        return response.json()
+
+    def update_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        state: Optional[str] = None,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        labels: Optional[List[str]] = None
+    ) -> Dict:
+        """Update an issue.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            issue_number: Issue number
+            state: New state (open, closed)
+            title: New title
+            body: New body text
+            labels: New list of label names
+            
+        Returns:
+            Updated issue data
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}"
+        data = {}
+        if state is not None:
+            data["state"] = state
+        if title is not None:
+            data["title"] = title
+        if body is not None:
+            data["body"] = body
+        if labels is not None:
+            data["labels"] = labels
+            
+        response = self.session.patch(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def create_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        title: str,
+        head: str,
+        base: str = "main",
+        body: Optional[str] = None,
+        draft: bool = False
+    ) -> Dict:
+        """Create a pull request.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            title: PR title
+            head: Branch to merge from
+            base: Branch to merge into (default: main)
+            body: PR description
+            draft: Whether to create as draft PR
+            
+        Returns:
+            Created PR data
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls"
+        data = {
+            "title": title,
+            "head": head,
+            "base": base,
+            "draft": draft
+        }
+        if body is not None:
+            data["body"] = body
+            
+        response = self.session.post(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def get_current_branch(self, owner: str, repo: str) -> str:
+        """Get the current branch name.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            
+        Returns:
+            Current branch name
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/heads"
+        response = self.session.get(url)
+        response.raise_for_status()
+        refs = response.json()
+        
+        # Find the ref that HEAD points to
+        head_url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/head"
+        head_response = self.session.get(head_url)
+        if head_response.status_code == 200:
+            head_ref = head_response.json()["ref"]
+            for ref in refs:
+                if ref["ref"] == head_ref:
+                    return ref["ref"].replace("refs/heads/", "")
+        
+        # Fallback: return the first branch (usually main/master)
+        return refs[0]["ref"].replace("refs/heads/", "")
+
+    def create_pr_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str
+    ) -> Dict:
+        """Create a comment on a pull request.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+            body: Comment text
+            
+        Returns:
+            Created comment data
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        response = self.session.post(url, json={"body": body})
+        response.raise_for_status()
+        return response.json()
+
     @staticmethod
     def parse_repo_url(url: str) -> Tuple[str, str]:
         """Parse owner and repo from a GitHub repository URL.

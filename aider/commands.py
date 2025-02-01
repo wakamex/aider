@@ -1825,6 +1825,54 @@ Just show me the edits I need to make.
 
         return commands
 
+    def cmd_prcomment(self, args: str) -> Optional[str]:
+        """Add a comment to a pull request.
+        
+        Usage:
+            /prcomment owner/repo#123 Your comment text
+            /prcomment https://github.com/owner/repo/pull/123 Your comment text
+        """
+        if not args:
+            return "Usage: /prcomment owner/repo#123 Your comment text"
+        
+        # Split into reference and comment
+        try:
+            ref, comment = args.split(" ", 1)
+        except ValueError:
+            return "Please provide both a PR reference and comment text"
+            
+        client = self.ensure_client()
+        
+        # Handle URL format
+        if ref.startswith("https://"):
+            try:
+                repo_url, pr_number = ref.rsplit("/pull/", 1)
+                owner, repo = client.parse_repo_url(repo_url)
+                client.create_pr_comment(owner, repo, int(pr_number), comment)
+                return "Comment added to PR"
+            except (ValueError, TypeError):
+                return "Invalid PR URL format"
+        
+        # Handle owner/repo#number format
+        try:
+            repo, pr_number = ref.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            client.create_pr_comment(owner, repo, int(pr_number), comment)
+            return "Comment added to PR"
+        except (ValueError, TypeError):
+            return "Invalid PR reference format"
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
+
 def expand_subdir(file_path):
     if file_path.is_file():
         yield file_path

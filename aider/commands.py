@@ -1814,6 +1814,43 @@ Just show me the edits I need to make.
         except Exception as e:
             return f"Failed to create PR: {str(e)}"
 
+    def cmd_prupdate(self, args: str) -> Optional[str]:
+        """Update progress on a pull request.
+        
+        Usage:
+            /prupdate owner/repo#123 Change description
+            /prupdate https://github.com/owner/repo/pull/123 Change description
+        """
+        if not args:
+            return "Usage: /prupdate owner/repo#123 Change description"
+        
+        # Split into reference and change
+        try:
+            ref, change = args.split(" ", 1)
+        except ValueError:
+            return "Please provide both a PR reference and change description"
+            
+        client = self.ensure_client()
+        
+        # Handle URL format
+        if ref.startswith("https://"):
+            try:
+                repo_url, pr_number = ref.rsplit("/pull/", 1)
+                owner, repo = client.parse_repo_url(repo_url)
+                client.update_pr_progress(owner, repo, int(pr_number), [change])
+                return "PR progress updated"
+            except (ValueError, TypeError):
+                return "Invalid PR URL format"
+        
+        # Handle owner/repo#number format
+        try:
+            repo, pr_number = ref.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            client.update_pr_progress(owner, repo, int(pr_number), [change])
+            return "PR progress updated"
+        except (ValueError, TypeError):
+            return "Invalid PR reference format"
+
     def get_commands(self):
         commands = []
         for attr in dir(self):

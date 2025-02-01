@@ -30,7 +30,7 @@ This project extends aider to work with GitHub pull requests and issues.
 - [x] Add usage examples
 
 ### 4. Integration Features
-- [ ] Add automatic PR updates with progress
+- [x] Add automatic PR updates with progress
 - [ ] Add comment management
 - [ ] Add file change tracking
 

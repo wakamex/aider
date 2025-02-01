@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
+import datetime
 import requests
 import yaml
 import re
@@ -289,6 +289,71 @@ class GitHubIssueClient:
         """
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
         response = self.session.post(url, json={"body": body})
+        response.raise_for_status()
+        return response.json()
+
+    def get_pr_comments(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int
+    ) -> List[Dict]:
+        """Get comments on a pull request.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+            
+        Returns:
+            List of comments
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def update_pr_progress(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        changes: List[str]
+    ) -> Dict:
+        """Update PR with progress information.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+            changes: List of changes made
+            
+        Returns:
+            Created comment data
+        """
+        # Get existing comments
+        comments = self.get_pr_comments(owner, repo, pr_number)
+        
+        # Find progress comment if it exists
+        progress_header = "## 🔄 Progress Update"
+        progress_comment = None
+        for comment in comments:
+            if comment["body"].startswith(progress_header):
+                progress_comment = comment
+                break
+        
+        # Format changes
+        change_list = "\n".join(f"- {change}" for change in changes)
+        timestamp = "Last updated: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        body = f"{progress_header}\n\n{change_list}\n\n{timestamp}"
+        
+        # Update or create progress comment
+        if progress_comment:
+            url = progress_comment["url"]
+            response = self.session.patch(url, json={"body": body})
+        else:
+            response = self.create_pr_comment(owner, repo, pr_number, body)
+            
         response.raise_for_status()
         return response.json()
 

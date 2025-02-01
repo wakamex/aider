@@ -1,3 +1,10 @@
+"""Commands available in the chat session."""
+
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Union
+
+from .github_issues import GitHubIssueClient
+
 import glob
 import os
 import re
@@ -31,9 +38,16 @@ class SwitchCoder(Exception):
 
 
 class Commands:
-    voice = None
-    scraper = None
-    github = None
+    """Commands available in the chat session."""
+
+    def __init__(self, io, coder):
+        """Initialize Commands."""
+        self.io = io
+        self.coder = coder
+        self.github_client = None
+        self.voice = None
+        self.scraper = None
+        self.github = None
 
     def clone(self):
         return Commands(
@@ -1526,6 +1540,94 @@ Just show me the edits I need to make.
         except Exception as e:
             self.io.tool_error(f"Unexpected error: {e}")
 
+    def ensure_client(self):
+        """Ensure GitHub client is initialized."""
+        if not self.github_client:
+            self.github_client = GitHubIssueClient()
+        return self.github_client
+
+    def process_issue(self, owner: str, repo: str, issue_number: int):
+        """Process a GitHub issue."""
+        client = self.ensure_client()
+        issue = client.get_repo_issues(owner, repo, state="all")[0]  # Get specific issue
+        comments = client.get_issue_comments(owner, repo, issue_number)
+        return issue, comments
+
+    def process_repo_issue(self, repo_url: str, issue_number: int):
+        """Process an issue from a repository URL."""
+        client = self.ensure_client()
+        owner, repo = client.parse_repo_url(repo_url)
+        return self.process_issue(owner, repo, issue_number)
+
+    def cmd_issue(self, args: str) -> Optional[str]:
+        """Process a GitHub issue.
+        
+        Usage:
+            /issue owner/repo#123
+            /issue https://github.com/owner/repo/issues/123
+        """
+        if not args:
+            return "Usage: /issue owner/repo#123 or /issue https://github.com/owner/repo/issues/123"
+        
+        # Try URL format
+        if args.startswith("https://"):
+            try:
+                repo_url, issue_number = args.rsplit("/issues/", 1)
+                self.process_repo_issue(repo_url, int(issue_number))
+                return None
+            except (ValueError, TypeError):
+                return "Invalid issue reference. Expected format: https://github.com/owner/repo/issues/123"
+        
+        # Try owner/repo#number format
+        try:
+            repo, issue_number = args.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            self.process_issue(owner, repo, int(issue_number))
+            return None
+        except (ValueError, TypeError):
+            return "Invalid issue reference. Expected format: owner/repo#123"
+
+    def cmd_issues(self, args: str) -> Optional[str]:
+        """List open issues in a GitHub repository.
+        
+        Usage:
+            /issues owner/repo
+            /issues https://github.com/owner/repo
+        """
+        if not args:
+            return "Usage: /issues owner/repo or /issues https://github.com/owner/repo"
+        
+        client = self.ensure_client()
+        
+        # Try URL format
+        if args.startswith("https://"):
+            try:
+                owner, repo = client.parse_repo_url(args)
+            except ValueError:
+                return "Invalid repository URL. Expected format: https://github.com/owner/repo"
+        else:
+            # Try owner/repo format
+            try:
+                owner, repo = args.split("/", 1)
+            except ValueError:
+                return "Invalid repository reference. Expected format: owner/repo"
+        
+        issues = client.get_repo_issues(owner, repo)
+        if not issues:
+            return f"No open issues found in {owner}/{repo}"
+        
+        return None
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
 
 def expand_subdir(file_path):
     if file_path.is_file():

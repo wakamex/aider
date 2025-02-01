@@ -4,34 +4,34 @@ This project extends aider to automatically process and work with GitHub issues 
 
 ## Tasks
 
-### 1. Create GitHub Issue Integration Module
-- [X] Create `github_issues.py` module
-- [X] Implement GitHub API authentication handling
-- [X] Add issue fetching functionality (by repo, labels, status)
-- [X] Add rate limiting and pagination handling
-- [X] Write tests for GitHub API integration
+### 1. Create GitHub Issue Integration Module 
+- [x] Create `github_issues.py` module
+- [x] Implement GitHub API authentication handling
+- [x] Add issue fetching functionality (by repo, labels, status)
+- [x] Add rate limiting and pagination handling
+- [x] Write tests for GitHub API integration
 
-### 2. Develop Issue Parser
-- [X] Create issue content parser
-- [X] Extract code snippets and context
-- [X] Parse issue labels and metadata
-- [X] Handle issue comments and discussion threads
-- [X] Add support for issue templates
-- [X] Write tests for parser functionality
+### 2. Develop Issue Parser 
+- [x] Create issue content parser
+- [x] Extract code snippets and context
+- [x] Parse issue labels and metadata
+- [x] Handle issue comments and discussion threads
+- [x] Add support for issue templates
+- [x] Write tests for parser functionality
 
-### 3. Build Problem Definition Generator
-- [X] Define problem definition schema
-- [X] Create converter from GitHub issue to problem definition
-- [X] Handle different issue formats and templates
-- [X] Add validation for generated definitions
-- [X] Write tests for definition generation
+### 3. Build Problem Definition Generator 
+- [x] Define problem definition schema
+- [x] Create converter from GitHub issue to problem definition
+- [x] Handle different issue formats and templates
+- [x] Add validation for generated definitions
+- [x] Write tests for definition generation
 
-### 4. Integrate with Aider Core
-- [X] Add CLI commands for GitHub issue processing
-- [X] Implement issue-to-aider workflow
-- [X] Add configuration options for GitHub integration
-- [X] Create documentation for GitHub features
-- [X] Write integration tests
+### 4. Integrate with Aider Core 
+- [x] Add CLI commands for GitHub issue processing
+- [x] Implement issue-to-aider workflow
+- [x] Add configuration options for GitHub integration
+- [x] Create documentation for GitHub features
+- [x] Write integration tests
 
 ### 5. Add Issue Update Features
 - [ ] Implement progress tracking
@@ -46,8 +46,9 @@ This project extends aider to automatically process and work with GitHub issues 
 1. **GitHub Issue Integration Module** (`github_issues.py`)
    - Created GitHubIssueClient for API interaction
    - Implemented issue and comment fetching
-   - Added rate limit handling
+   - Added rate limit handling and configuration
    - Added repository URL parsing
+   - Added token configuration via env var or direct input
 
 2. **Issue Parser** (`issue_parser.py`)
    - Created structured problem definition format
@@ -71,27 +72,30 @@ This project extends aider to automatically process and work with GitHub issues 
 
 ### In Progress
 1. **Testing**
-   - Need to complete test coverage for new commands
-   - Need to add integration tests
+   - [x] Complete test coverage for new commands
+   - [x] Add integration tests
+   - [x] Add token configuration tests
+   - [x] Add rate limit tests
 
 2. **Documentation**
-   - Need to add user documentation for new commands
-   - Need to add developer documentation for new modules
+   - [ ] Add user documentation for new commands
+   - [ ] Add developer documentation for new modules
 
 ### To Do
 1. **Configuration**
-   - Add GitHub token configuration
-   - Add rate limit settings
+   - [x] Add GitHub token configuration
+   - [x] Add rate limit settings
+   - [x] Add configuration file support
 
 2. **Features**
-   - Add issue comment support
-   - Add issue update support
-   - Add issue creation support
+   - [ ] Add issue comment support
+   - [ ] Add issue update support
+   - [ ] Add issue creation support
 
 3. **Integration**
-   - Add automatic issue updates with progress
-   - Add comment management
-   - Add file change tracking
+   - [ ] Add automatic issue updates with progress
+   - [ ] Add comment management
+   - [ ] Add file change tracking
 
 ## Dependencies
 - requests: HTTP client for GitHub API
@@ -102,3 +106,5 @@ This project extends aider to automatically process and work with GitHub issues 
 - All code changes follow minimal and concise design principles
 - Focus on maintainability and readability
 - Error handling with user-friendly messages
+- Token configuration via GITHUB_TOKEN environment variable
+- Rate limit handling with automatic tracking

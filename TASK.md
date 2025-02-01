@@ -78,8 +78,8 @@ This project extends aider to automatically process and work with GitHub issues 
    - [x] Add rate limit tests
 
 2. **Documentation**
-   - [ ] Add user documentation for new commands
-   - [ ] Add developer documentation for new modules
+   - [x] Add user documentation for new commands
+   - [x] Add developer documentation for new modules
 
 ### To Do
 1. **Configuration**

@@ -2,6 +2,7 @@ import base64
 import os
 import signal
 import time
+import logging
 import webbrowser
 from collections import defaultdict
 from dataclasses import dataclass

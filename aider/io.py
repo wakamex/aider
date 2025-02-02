@@ -294,7 +294,6 @@ class InputOutput:
         self.file_watcher = file_watcher
         self.root = root
         self.logger = logging.getLogger(__name__)
-        self.logger = logging.getLogger(__name__)
 
     def _get_style(self):
         style_dict = {}

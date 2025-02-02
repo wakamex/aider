@@ -19,6 +19,23 @@ import importlib_resources
 from dotenv import load_dotenv
 from prompt_toolkit.enums import EditingMode
 
+import logging
+import sys
+import threading
+import traceback
+import webbrowser
+from dataclasses import fields
+from pathlib import Path
+
+try:
+    import git
+except ImportError:
+    git = None
+
+import importlib_resources
+from dotenv import load_dotenv
+from prompt_toolkit.enums import EditingMode
+
 from aider import __version__, models, urls, utils
 from aider.analytics import Analytics
 from aider.args import get_parser
@@ -37,14 +54,6 @@ from aider.versioncheck import check_version, install_from_main_branch, install_
 from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
-
-
-def setup_logging(log_level):
-    """Setup basic logging."""
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f"Invalid log level: {log_level}")
-    logging.basicConfig(level=numeric_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def setup_logging(log_level):
@@ -459,11 +468,11 @@ def sanity_check_repo(repo, io):
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
     report_uncaught_exceptions()
 
-    # Set up logging
-    setup_logging(os.environ.get("AIDER_LOG_LEVEL", "WARNING"))
-
     if argv is None:
         argv = sys.argv[1:]
+
+    # Set up logging
+    setup_logging(os.environ.get("AIDER_LOG_LEVEL", "WARNING"))
 
     if git is None:
         git_root = None

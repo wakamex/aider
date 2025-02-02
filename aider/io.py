@@ -30,6 +30,7 @@ from rich.style import Style as RichStyle
 from rich.text import Text
 
 from aider.mdstream import MarkdownStream
+import logging
 
 from .dump import dump  # noqa: F401
 from .utils import is_image_file
@@ -292,6 +293,7 @@ class InputOutput:
 
         self.file_watcher = file_watcher
         self.root = root
+        self.logger = logging.getLogger(__name__)
         self.logger = logging.getLogger(__name__)
 
     def _get_style(self):

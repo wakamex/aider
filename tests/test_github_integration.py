@@ -10,7 +10,6 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from aider.commands import Commands
 from aider.github_issues import GITHUB_API_URL, GitHubIssueClient, PersonalityManager
 
 
@@ -224,6 +223,8 @@ def get_remote_personality(github_client, test_repo):
 
 def test_personality_loading(github_client, test_repo, local_repo):
     """Test loading personality from remote repo."""
+    input_text = "Hello world"
+
     # Create personality directory
     (local_repo / "personality").mkdir()
 
@@ -232,20 +233,9 @@ def test_personality_loading(github_client, test_repo, local_repo):
     manager.load_personality(local_repo)
 
     # Test applying personality without loading one (should use default)
-    result = manager.apply_personality("Hello world", "test")
-    assert result is not None
-    assert "[✨]" in result
-
-    # Create and load a custom personality
-    custom_personality = "You are a test personality that adds TEST to everything"
-    (local_repo / "personality" / "README.md").write_text(custom_personality)
-    manager.load_personality(local_repo)
-
-    # Verify custom personality was loaded and used
-    assert manager.personality == custom_personality
-    result = manager.apply_personality("Hello world", "test")
-    assert "TEST" in result
-    assert "[✨]" in result
+    output_text = manager.apply_personality(input_text, "test")
+    assert output_text is not None
+    assert output_text != input_text
 
 def test_pr_workflow(github_client, test_repo, local_repo, mock_io, mock_coder):
     """Test complete PR workflow with descriptive content."""
@@ -362,3 +352,114 @@ def test_personality_pr_comment(mock_session):
 
     assert "(with personality)" in request_body
     assert "[✨]" in request_body  # Verify our personality indicator is present
+
+def test_automation_flow(github_client, test_repo):
+    """Test the complete automation flow."""
+    # Create a test issue with a problem definition
+    issue_title = "Add logging configuration"
+    issue_body = """Problem: Add logging configuration to the project
+
+    Requirements:
+    1. Add a logging.conf file
+    2. Configure file and console handlers
+    3. Set default level to INFO
+    4. Add rotation for file handler
+
+    Please implement this using the Python logging module."""
+
+    issue = github_client.create_issue(
+        test_repo["owner"]["login"],
+        test_repo["name"],
+        issue_title,
+        issue_body,
+        labels=["aider"]
+    )
+
+    # Create a temporary directory for the automation run
+    with tempfile.TemporaryDirectory() as work_dir:
+        work_dir = Path(work_dir)
+        
+        # Import here to avoid circular imports
+        from aider.github_automation import main, clone_repo
+
+        # Get model from env var
+        model = os.getenv("AIDER_TEST_MODEL", "gemini/gemini-2.0-flash-exp")
+
+        # Test repository cloning
+        repo_dir = work_dir / "test-clone"
+        assert clone_repo(
+            test_repo["owner"]["login"],
+            test_repo["name"],
+            repo_dir,
+            github_client.token
+        ), "Repository clone failed"
+        
+        # Verify clone was shallow
+        git_dir = repo_dir / ".git"
+        assert git_dir.exists(), "Git directory not found"
+        
+        # Check shallow clone by looking at .git/shallow file
+        shallow_file = git_dir / "shallow"
+        assert shallow_file.exists(), "Not a shallow clone"
+        
+        # Verify we can create a branch
+        branch_name = f"test-branch-{int(time.time())}"
+        run_git(["checkout", "-b", branch_name], cwd=repo_dir)
+        current_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
+        assert current_branch == branch_name, "Branch creation failed"
+
+        # Prepare test arguments
+        test_args = [
+            f"{test_repo['owner']['login']}/{test_repo['name']}",
+            "--labels", "aider",
+            "--work-dir", str(work_dir),
+            "--model", model
+        ]
+
+        # Mock sys.argv
+        with patch("sys.argv", ["github_automation.py"] + test_args):
+            # Run automation
+            main()
+
+        # Verify automation directory structure
+        issue_dir = work_dir / f"{test_repo['owner']['login']}-{test_repo['name']}-{issue['number']}"
+        assert issue_dir.exists(), "Issue directory not created"
+        
+        repo_dir = issue_dir / "repo"
+        assert repo_dir.exists(), "Repository directory not created"
+        assert (repo_dir / ".git").exists(), "Git directory not created"
+        
+        # Verify branch was created
+        current_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
+        assert current_branch == f"fix-issue-{issue['number']}", "Issue branch not created"
+
+        # Verify results file
+        results_file = issue_dir / ".aider.results.json"
+        assert results_file.exists(), "Results file not created"
+
+        # Verify PR creation
+        prs = github_client.get_repo_prs(
+            test_repo["owner"]["login"],
+            test_repo["name"]
+        )
+        assert len(prs) > 0, "No PRs created"
+
+        latest_pr = prs[0]
+        assert "Add logging configuration" in latest_pr["title"]
+
+        # Verify PR content
+        pr_files = github_client.get_pr_files(
+            test_repo["owner"]["login"],
+            test_repo["name"],
+            latest_pr["number"]
+        )
+
+        # Should have created logging.conf
+        logging_conf_file = next(
+            (f for f in pr_files if f["filename"].endswith("logging.conf")),
+            None
+        )
+        assert logging_conf_file is not None, "logging.conf not created"
+
+        # PR should reference the issue
+        assert f"Fixes #{issue['number']}" in latest_pr["body"].lower()

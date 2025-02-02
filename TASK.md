@@ -36,6 +36,33 @@ This project extends aider to work with GitHub pull requests and issues.
 - [x] Add LLM integration for comment styling
 - [x] Add personality configuration
 
+### 5. Automation Features
+- [-] Create automation script
+  - [x] Use benchmark.py's pattern of setting up files first, then running coder
+  - [x] Simplify to use direct `coder.run()` with instructions
+  - [x] Keep the script foreground-style like benchmark.py
+  - [x] Setup clean working directory for each issue
+  - [x] Add shallow clone of repository
+  - [x] Create branch per issue
+  - [x] Test branch creation and git operations
+  - [x] Add commit after changes
+  - [x] Add PR creation
+  - [x] Add PR description from results
+  - [x] Wrap core logic in try/except
+  - [x] Store results in JSON format
+  - [x] Include error details in output
+  - [-] Add failure reporting to issue
+  - [ ] Add retry mechanism for transient failures
+- [-] Extend problem processing
+  - [x] Add clean workspace per issue
+  - [x] Add PR creation on success
+  - [-] Add failure reporting to issue
+- [-] Add automation settings
+  - [x] Add issue label filters
+  - [x] Add repository list
+  - [ ] Add retry settings
+  - [ ] Add configurable git settings (branch prefix, PR template)
+
 ## Dependencies
 - requests: HTTP client for GitHub API
 - yaml: Configuration file parsing
@@ -150,3 +177,44 @@ Users can define their personality by:
 /pr Create a pull request.
 /prupdate Update progress on a pull request.
 /prcomment Add a comment to a pull request.
+
+## GitHub Issue Automation
+
+## Objective
+Create a simple automation script to process GitHub issues using the real coder module.
+
+## Implementation Status
+
+### Core Features (Done ✓)
+- [x] Add GitHub API client
+- [x] Add issue parsing and problem generation
+- [x] Add personality configuration
+- [x] Simplify to use direct `coder.run()` with instructions
+- [x] Setup clean working directory per issue
+- [x] Add basic error handling and result storage
+- [x] Add shallow clone of repository
+- [x] Create branch per issue
+- [x] Add integration tests for repository operations
+
+### Next Features (In Priority Order)
+1. Git Operations
+   - [ ] Add commit after changes
+   - [ ] Add PR creation
+   - [ ] Add PR description template
+
+2. Error Handling
+   - [ ] Add retry mechanism for transient failures
+   - [ ] Improve failure reporting to issue
+
+3. Configuration
+   - [ ] Add configurable git settings (branch prefix, PR template)
+   - [ ] Add retry settings
+
+### Testing Status
+- [x] Basic API operations
+- [x] Repository cloning and branch creation
+- [ ] Full automation flow with PR creation
+- [ ] Error recovery scenarios
+
+## Dependencies
+- requests: HTTP client for GitHub API

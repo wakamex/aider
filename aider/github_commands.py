@@ -46,18 +46,12 @@ class GitHubCommands:
         issue = self.client.get_repo_issues(
             owner,
             repo,
-            state="open",
-            page=1,
-            per_page=1
+            state="open"
         )[0]
 
         comments = []
         if with_comments:
-            comments = self.client.get_issue_comments(
-                owner,
-                repo,
-                issue_number
-            )
+            comments = self.client.get_issue_comments(owner, repo, issue_number)
 
         # Parse and generate problem
         problem_def = self.parser.parse_issue(issue, comments)
@@ -66,9 +60,11 @@ class GitHubCommands:
             additional_context={"repository": f"{owner}/{repo}"}
         )
 
-        # Update aider's context
-        self.coder.set_task(aider_problem.task)
-        self.coder.add_context(aider_problem.context)
+        # Run aider on the problem
+        instructions = aider_problem.task
+        if aider_problem.context:
+            instructions = f"{aider_problem.context}\n\n{instructions}"
+        self.coder.run(with_message=instructions, preproc=False)
 
         # Track files that need attention
         for file in aider_problem.files_to_modify:

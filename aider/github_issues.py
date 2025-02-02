@@ -572,3 +572,30 @@ class GitHubIssueClient:
                 return match.groups()
 
         raise ValueError("Invalid GitHub repository URL format")
+
+    def create_issue(self, owner: str, repo: str, title: str, body: str, labels: list = None) -> dict:
+        """Create a new issue in the repository."""
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues"
+        data = {
+            "title": title,
+            "body": body,
+            "labels": labels or []
+        }
+        response = self.session.post(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def get_repo_prs(self, owner: str, repo: str, state: str = "open") -> list:
+        """Get pull requests from a repository."""
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls"
+        params = {"state": state}
+        response = self.session.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list:
+        """Get files changed in a pull request."""
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls/{pr_number}/files"
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.json()

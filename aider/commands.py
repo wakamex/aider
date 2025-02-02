@@ -1915,6 +1915,42 @@ Just show me the edits I need to make.
 
         return commands
 
+    def cmd_personality(self, args: str) -> Optional[str]:
+        """Toggle personality feature or show status.
+
+        Usage:
+            /personality toggle  # Toggle personality on/off
+            /personality        # Show current status
+        """
+        if not self.github:
+            return "GitHub integration not initialized"
+
+        # Initialize if needed
+        self.github._ensure_client()
+        client = self.github.client
+
+        if not args:
+            status = "enabled" if client.personality.enabled else "disabled"
+            return f"Personality is currently {status}"
+
+        if args.strip() == "toggle":
+            client.personality.enabled = not client.personality.enabled
+            status = "enabled" if client.personality.enabled else "disabled"
+            return f"Personality is now {status}"
+
+        return "Usage: /personality [toggle]"
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
+
 def expand_subdir(file_path):
     if file_path.is_file():
         yield file_path

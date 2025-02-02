@@ -8,6 +8,7 @@ import requests
 import yaml
 import re
 import subprocess
+import logging
 
 # Constants for GitHub API
 GITHUB_API_URL = "https://api.github.com"
@@ -16,7 +17,11 @@ DEFAULT_CONFIG = {
     "rate_limit": {
         "max_per_page": 100,
         "default_per_page": 30,
-    }
+    },
+    "personality": {
+        "enabled": True,
+    },
+    "test_model": "gpt-3.5-turbo",  # Default model for tests
 }
 
 def merge_configs(base: Dict, update: Dict) -> Dict:
@@ -29,10 +34,84 @@ def merge_configs(base: Dict, update: Dict) -> Dict:
             result[key] = value
     return result
 
+class PersonalityManager:
+    """Manages personality-driven content for GitHub interactions."""
+
+    def __init__(self, llm=None, github_client=None):
+        self.llm = llm
+        self.personality = None
+        self.enabled = True  # Can be toggled via config
+        self.github_client = github_client
+
+    def load_personality(self, repo_path: Path):
+        """Load personality from user's remote personality repo."""
+        if not self.github_client:
+            logging.info("No github client available for remote loading")
+            return
+
+        try:
+            owner = self.github_client.get_current_user()["login"]
+            logging.info(f"Trying to load remote personality from {owner}/personality")
+            response = self.github_client.session.get(f"{GITHUB_API_URL}/repos/{owner}/personality/contents/README.md")
+            if response.status_code == 200:
+                import base64
+                self.personality = base64.b64decode(response.json()["content"]).decode().strip()
+                logging.info(f"Successfully loaded remote personality")
+            else:
+                logging.info(f"Failed to get remote personality: {response.status_code}")
+        except Exception as e:
+            logging.info(f"Failed to load remote personality: {e}")
+
+    def apply_personality(self, text: str, context: str = "") -> str:
+        """Apply personality to text if enabled and available.
+
+        Args:
+            text: Original text content
+            context: Type of content (e.g. 'PR comment', 'issue update')
+
+        Returns:
+            Text with personality applied, or original text if disabled/error
+        """
+        logging.info(f"\nDebug: PersonalityManager.apply_personality")
+        logging.info(f"Enabled: {self.enabled}")
+        logging.info(f"Has personality: {bool(self.personality)}")
+        logging.info(f"Has LLM: {bool(self.llm)}")
+
+        if not self.enabled or not self.personality or not self.llm:
+            logging.info("Skipping personality - not enabled, no personality loaded, or no LLM")
+            return text
+
+        # Remove any existing personality markers
+        text = re.sub(r'\s*\[✨\]\s*$', '', text.strip())
+
+        try:
+            # Create prompt for LLM
+            prompt = f"""
+            You are enhancing text with personality.
+            Use the personality description below to guide your response:
+
+            {self.personality}
+
+            Original text:
+            {text}
+
+            Respond with a SINGLE line of flavor text to be added prior to the original text.
+            """
+
+            logging.info(f"\nDebug: Sending prompt to LLM:\n{prompt}")
+            response = self.llm.generate(prompt)
+            logging.info(f"\nDebug: LLM response:\n{response}")
+
+            response = response.split("\n")[0].strip()
+            return response + "\n" + text
+        except Exception as e:
+            logging.info(f"Error applying personality: {e}")
+            return text
+
 class GitHubIssueClient:
     """Client for interacting with GitHub Issues API."""
 
-    def __init__(self, token: Optional[str] = None, config: Optional[Dict] = None, repo_path: Optional[str] = None):
+    def __init__(self, token: Optional[str] = None, config: Optional[Dict] = None, repo_path: Optional[str] = None, llm=None):
         """Initialize the GitHub client.
 
         Args:
@@ -40,9 +119,11 @@ class GitHubIssueClient:
                   or .aider.conf.yml github.token
             config: Configuration dict. If not provided, will try to read from .aider.conf.yml
             repo_path: Path to the repository
+            llm: LLM instance for personality-driven content
         """
         self.config = DEFAULT_CONFIG.copy()
         self.repo_path = repo_path
+        self.personality = PersonalityManager(llm, self)
 
         # Try to load config from .aider.conf.yml
         conf_path = Path(".aider.conf.yml")
@@ -51,14 +132,24 @@ class GitHubIssueClient:
             try:
                 with open(conf_path) as f:
                     yaml_config = yaml.safe_load(f) or {}
-                    if "github" in yaml_config:
-                        self.config = merge_configs(self.config, yaml_config["github"])
             except Exception:
-                pass  # Ignore config file errors
+                pass
 
-        # Update with provided config
+        # Load GitHub config section
+        github_config = yaml_config.get("github", {})
+
+        # Update personality settings
+        personality_config = github_config.get("personality", {})
+        self.personality.enabled = personality_config.get("enabled", True)
+
+        if self.repo_path:
+            self.personality.load_personality(Path(self.repo_path))
+
+        # Merge configs
         if config:
             self.config = merge_configs(self.config, config)
+        if github_config:
+            self.config = merge_configs(self.config, github_config)
 
         # Token precedence: direct > env > config
         self.token = token or os.getenv(GITHUB_TOKEN_ENV)
@@ -164,7 +255,9 @@ class GitHubIssueClient:
             Created comment data
         """
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
-        response = self.session.post(url, json={"body": body})
+        body = self.personality.apply_personality(body, context="issue comment")
+        data = {"body": body}
+        response = self.session.post(url, json=data)
         response.raise_for_status()
         return response.json()
 
@@ -199,7 +292,7 @@ class GitHubIssueClient:
         if title is not None:
             data["title"] = title
         if body is not None:
-            data["body"] = body
+            data["body"] = self.personality.apply_personality(body, context="issue update")
         if labels is not None:
             data["labels"] = labels
 
@@ -232,16 +325,63 @@ class GitHubIssueClient:
             Created PR data
         """
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls"
+        if body:
+            body = self.personality.apply_personality(body, context="PR description")
         data = {
             "title": title,
             "head": head,
             "base": base,
+            "body": body,
             "draft": draft
         }
-        if body is not None:
-            data["body"] = body
-
         response = self.session.post(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def create_pr_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str
+    ) -> Dict:
+        """Create a comment on a pull request.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+            body: Comment text
+
+        Returns:
+            Created comment data
+        """
+        # Use issues endpoint since PRs are issues
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        body = self.personality.apply_personality(body, context="PR comment")
+        data = {"body": body}
+        response = self.session.post(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def get_pr_comments(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int
+    ) -> List[Dict]:
+        """Get comments on a pull request.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+
+        Returns:
+            List of comments
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        response = self.session.get(url)
         response.raise_for_status()
         return response.json()
 
@@ -271,50 +411,6 @@ class GitHubIssueClient:
         except subprocess.CalledProcessError:
             # Fallback to main if we can't get the current branch
             return "main"
-
-    def create_pr_comment(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int,
-        body: str
-    ) -> Dict:
-        """Create a comment on a pull request.
-
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            pr_number: PR number
-            body: Comment text
-
-        Returns:
-            Created comment data
-        """
-        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        response = self.session.post(url, json={"body": body})
-        response.raise_for_status()
-        return response.json()
-
-    def get_pr_comments(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int
-    ) -> List[Dict]:
-        """Get comments on a pull request.
-
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            pr_number: PR number
-
-        Returns:
-            List of comments
-        """
-        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        response = self.session.get(url)
-        response.raise_for_status()
-        return response.json()
 
     def get_file_changes(self) -> Dict[str, List[str]]:
         """Get file changes in the current branch using git.
@@ -409,6 +505,12 @@ class GitHubIssueClient:
         timestamp = "Last updated: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body += f"\n\n{timestamp}"
 
+        logging.info(f"\nDebug: Original body before personality:\n{body}")
+
+        # Don't apply personality because it will get added in create_pr_comment
+        # body = self.personality.apply_personality(body, context="PR progress update")
+        # logging.info(f"\nDebug: Body after personality:\n{body}")
+
         # Update or create progress comment
         if progress_comment:
             url = progress_comment["url"]
@@ -428,6 +530,19 @@ class GitHubIssueClient:
         response = self.session.get(url)
         response.raise_for_status()
         return response.json()
+
+    def get_user_repos(self) -> List[Dict]:
+        """Get list of repositories for the authenticated user."""
+        url = f"{GITHUB_API_URL}/user/repos"
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_repo(self, owner: str, repo: str) -> None:
+        """Delete a repository."""
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}"
+        response = self.session.delete(url)
+        response.raise_for_status()
 
     @staticmethod
     def parse_repo_url(url: str) -> Tuple[str, str]:

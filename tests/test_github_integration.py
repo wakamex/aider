@@ -176,9 +176,7 @@ def local_repo(test_repo, github_token, github_client):
         run_git(["clone", clone_url, tmpdir])
 
         # Set local git configs to match GitHub user
-        owner = github_client.get_current_user()["login"]
-        run_git(["config", "user.name", owner], cwd=tmp_path)
-        run_git(["config", "user.email", f"{owner}@users.noreply.github.com"], cwd=tmp_path)
+        github_client.configure_git_user(tmp_path)
 
         yield tmp_path
 
@@ -424,7 +422,7 @@ def test_automation_flow(github_client, test_repo):
             main_model,
             main_model.edit_format,
             io,
-            use_git=False,  # Prevent aider from managing git
+            use_git=True,  # Allow aider to manage git
             stream=False,
             verbose=False,
             cache_prompts=True,
@@ -436,8 +434,7 @@ def test_automation_flow(github_client, test_repo):
             f"{test_repo['owner']['login']}/{test_repo['name']}",
             "--labels", "aider",
             "--work-dir", str(work_dir),
-            "--model", model,
-            "--no-git"  # Tell automation script not to manage git
+            "--model", model
         ]
 
         # Mock sys.argv
@@ -482,4 +479,4 @@ def test_automation_flow(github_client, test_repo):
         assert logging_conf_file is not None, "logging.conf not created"
 
         # PR should reference the issue
-        assert f"Fixes #{issue['number']}" in latest_pr["body"].lower()
+        assert f"fixes #{issue['number']}" in latest_pr["body"].lower()

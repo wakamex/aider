@@ -1,7 +1,7 @@
 """GitHub issue integration commands for aider."""
 
+import logging
 from .github_issues import GitHubIssueClient
-from .issue_parser import IssueParser
 
 class GitHubCommands:
     """Commands for working with GitHub issues in aider."""
@@ -16,67 +16,46 @@ class GitHubCommands:
         self.io = io
         self.coder = coder
         self.client = None
-        self.parser = IssueParser()
 
     def _ensure_client(self) -> None:
         """Ensure GitHub client is initialized."""
         if not self.client:
             self.client = GitHubIssueClient()
 
-    def process_issue(
-        self,
-        owner: str,
-        repo: str,
-        issue_number: int,
-        with_comments: bool = True
-    ) -> None:
-        """Process a GitHub issue and prepare it for aider.
-
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            issue_number: Issue number to process
-            with_comments: Whether to include issue comments
-        """
+    def process_issue(self, owner: str, repo: str, issue_number: int, with_comments: bool = True) -> None:
+        """Process a GitHub issue and prepare it for aider."""
         self._ensure_client()
 
-        # Fetch issue and comments
+        # Get issue details
         issue = self.client.get_issue(owner, repo, issue_number)
         if not issue:
             raise Exception(f"Issue {issue_number} not found")
 
+        # Get issue comments if requested
         comments = []
         if with_comments:
             comments = self.client.get_issue_comments(owner, repo, issue_number)
 
-        # Parse issue and build instructions
-        problem_def = self.parser.parse_issue(issue, comments)
-        
-        # Build task description
-        instructions = f"{problem_def.title}\n\n"
-        if problem_def.description:
-            instructions += f"{problem_def.description}\n\n"
-            
-        # Add relevant context
-        if problem_def.context:
-            for key, value in problem_def.context.items():
-                if key in ['context', 'background']:
-                    instructions += f"\nBackground:\n{value}\n"
-                elif key == 'current behavior':
-                    instructions += f"\nCurrent Behavior:\n{value}\n"
-                elif key == 'additional_info':
-                    instructions += f"\nAdditional Information:\n{value}\n"
-                    
-        # Add repository context
-        instructions += f"\nRepository: {owner}/{repo}"
+        # Build instruction string from issue title and body
+        instruction = (
+            f"Problem: {issue['title']}\n\n"
+            f"{issue['body']}\n\n"
+            "Note: This is an automated session. Please create all necessary files in one go. "
+            "Do not ask for files to be added to the chat - just create them.\n"
+            "If you need to create multiple files, do it all at once.\n"
+        )
 
-        # Run aider with the instructions
-        self.coder.run(instructions)
+        # Add comments if any
+        if comments:
+            instruction += "\nAdditional context from comments:\n"
+            for comment in comments:
+                instruction += f"\n{comment['body']}\n"
 
-        # Add any referenced files
-        for ref in problem_def.code_references:
-            if ref.file:
-                self.coder.add_file(ref.file)
+        logging.info(f"Sending instruction to coder: {instruction}")
+
+        # Send instruction to coder
+        response = self.coder.run(instruction)
+        logging.info(f"Coder response: {response}")
 
     def process_repo_issue(
         self,

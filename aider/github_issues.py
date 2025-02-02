@@ -531,6 +531,27 @@ class GitHubIssueClient:
         response.raise_for_status()
         return response.json()
 
+    def configure_git_user(self, repo_dir: str) -> None:
+        """Configure git user settings for a repository based on GitHub user.
+
+        Args:
+            repo_dir: Path to the git repository
+        """
+        user = self.get_current_user()
+        owner = user["login"]
+        subprocess.run(
+            ["git", "config", "user.name", owner],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", f"{owner}@users.noreply.github.com"],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True
+        )
+
     def get_user_repos(self) -> List[Dict]:
         """Get list of repositories for the authenticated user."""
         url = f"{GITHUB_API_URL}/user/repos"

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-import sys
 import json
 import argparse
+import logging
 import traceback
 from pathlib import Path
-import shutil
 import os
 import subprocess
 
@@ -15,32 +14,40 @@ from aider.coders import Coder
 from aider import models
 from aider.github_issues import GitHubIssueClient
 
-def clone_repo(owner: str, repo: str, target_dir: Path, token: str) -> bool:
-    """Do a shallow clone of the repository."""
-    clone_url = f"https://{token}@github.com/{owner}/{repo}.git"
+def clone_repo(owner: str, repo: str, repo_dir: Path, token: str) -> bool:
+    """Clone a GitHub repository."""
+    clone_url = f"https://x-access-token:{token}@github.com/{owner}/{repo}.git"
     try:
-        # Remove target dir if it exists
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-            
-        # Do a shallow clone (depth=1)
-        result = subprocess.run(
-            ["git", "clone", "--depth=1", clone_url, str(target_dir)],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        logging.info(f"Cloning {owner}/{repo} to {repo_dir}")
+        subprocess.run(["git", "clone", "--depth=1", clone_url, str(repo_dir)], check=True, capture_output=True)
+
+        # Verify remote is set up correctly
+        logging.info("Checking git remote")
+        remotes = subprocess.run(["git", "remote", "-v"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        logging.info(f"Git remotes: {remotes.stdout}")
+
+        # Set up remote if needed
+        if "origin" not in remotes.stdout:
+            logging.info("Setting up git remote")
+            subprocess.run(["git", "remote", "add", "origin", clone_url], cwd=repo_dir, check=True)
+
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error cloning repository: {e.stderr}")
+        logging.error(f"Clone error: {e.stderr}")
         return False
 
 def run_git(args, cwd):
     try:
+        logging.info(f"Running git {' '.join(args)} in {cwd}")
         result = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, check=True)
-        return result.stdout
+        logging.info(f"Git output: {result.stdout}")
+        if result.stderr:
+            logging.info(f"Git stderr: {result.stderr}")
+        return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        print(f"Error running git: {e.stderr}")
+        logging.error(f"Git error: {e.stderr}")
+        if e.stdout:
+            logging.error(f"Git error stdout: {e.stdout}")
         raise
 
 def process_issue_real(
@@ -81,6 +88,7 @@ def process_issue_real(
             comments = client.get_issue_comments(owner, repo, issue_number)
 
         # Clone repository
+        logging.info(f"Cloning repository to {repo_dir}")
         if not clone_repo(owner, repo, repo_dir, client.token):
             raise Exception("Failed to clone repository")
 
@@ -97,7 +105,15 @@ def process_issue_real(
         )
 
         main_model = models.Model(model_name)
-        
+
+        # Change to repo directory before creating coder
+        logging.info(f"Changing to directory: {repo_dir}")
+        os.chdir(repo_dir)
+
+        # Configure git user before coder tries to commit
+        logging.info("Configuring git user")
+        client.configure_git_user(repo_dir)
+
         coder = Coder.create(
             main_model,
             main_model.edit_format,
@@ -118,23 +134,29 @@ def process_issue_real(
         commands.process_issue(owner, repo, issue_number, with_comments)
 
         # Check if any changes were made
+        logging.info("Checking git status")
         status = run_git(["status", "--porcelain"], cwd=repo_dir)
-        if status:
+        logging.info(f"Git status: {status}")
+
+        # Check for both tracked and untracked changes
+        has_changes = bool(status) and any(line.strip() for line in status.splitlines())
+        logging.info(f"Has changes: {has_changes}, no_git: {no_git}")
+        if has_changes:
             # Stage and commit changes
             if not no_git:
-                # Configure git user for this repo
-                run_git(["config", "user.email", "aider@example.com"], cwd=repo_dir)
-                run_git(["config", "user.name", "Aider Bot"], cwd=repo_dir)
-                
-                # Add all changes
-                run_git(["add", "."], cwd=repo_dir)
+                # Add all changes including untracked files
+                logging.info("Adding changes")
+                run_git(["add", "-A"], cwd=repo_dir)
                 commit_msg = f"Fix issue #{issue_number}: {issue['title']}\n\nFixes #{issue_number}"
+                logging.info("Committing changes")
                 run_git(["commit", "-m", commit_msg], cwd=repo_dir)
 
                 # Push changes
-                run_git(["push", "origin", branch_name], cwd=repo_dir)
+                logging.info("Pushing changes")
+                run_git(["push", "-u", "origin", branch_name], cwd=repo_dir)
 
                 # Create pull request
+                logging.info("Creating pull request")
                 pr = client.create_pull_request(
                     owner,
                     repo,
@@ -144,12 +166,14 @@ def process_issue_real(
                     base="main"
                 )
                 results["pull_request"] = pr
+                logging.info(f"Created PR: {pr}")
 
         results["success"] = True
 
     except Exception as e:
         results["success"] = False
         results["error"] = str(e)
+        logging.error(f"Error: {e}")
         raise
 
     finally:
@@ -164,9 +188,9 @@ def process_issue(owner: str, repo: str, issue_number: int, *args, **kwargs):
     try:
         return process_issue_real(owner, repo, issue_number, *args, **kwargs)
     except Exception as err:
-        print("=" * 40)
-        print("Issue processing failed")
-        print(err)
+        logging.info("=" * 40)
+        logging.info("Issue processing failed")
+        logging.info(err)
         traceback.print_exc()
 
         work_dir = kwargs.get("work_dir")

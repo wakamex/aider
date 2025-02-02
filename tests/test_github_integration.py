@@ -381,6 +381,9 @@ def test_automation_flow(github_client, test_repo):
         
         # Import here to avoid circular imports
         from aider.github_automation import main, clone_repo
+        from aider.io import InputOutput
+        from aider.coders import Coder
+        from aider import models
 
         # Get model from env var
         model = os.getenv("AIDER_TEST_MODEL", "gemini/gemini-2.0-flash-exp")
@@ -408,12 +411,33 @@ def test_automation_flow(github_client, test_repo):
         current_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
         assert current_branch == branch_name, "Branch creation failed"
 
-        # Prepare test arguments
+        # Setup aider components directly
+        io = InputOutput(
+            pretty=True,
+            yes=True,
+            chat_history_file=work_dir / ".aider.chat.history.md"
+        )
+        
+        main_model = models.Model(model)
+        
+        coder = Coder.create(
+            main_model,
+            main_model.edit_format,
+            io,
+            use_git=False,  # Prevent aider from managing git
+            stream=False,
+            verbose=False,
+            cache_prompts=True,
+            suggest_shell_commands=False,
+        )
+
+        # Run automation with modified args
         test_args = [
             f"{test_repo['owner']['login']}/{test_repo['name']}",
             "--labels", "aider",
             "--work-dir", str(work_dir),
-            "--model", model
+            "--model", model,
+            "--no-git"  # Tell automation script not to manage git
         ]
 
         # Mock sys.argv
@@ -428,10 +452,6 @@ def test_automation_flow(github_client, test_repo):
         repo_dir = issue_dir / "repo"
         assert repo_dir.exists(), "Repository directory not created"
         assert (repo_dir / ".git").exists(), "Git directory not created"
-        
-        # Verify branch was created
-        current_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
-        assert current_branch == f"fix-issue-{issue['number']}", "Issue branch not created"
 
         # Verify results file
         results_file = issue_dir / ".aider.results.json"

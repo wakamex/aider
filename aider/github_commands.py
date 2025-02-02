@@ -2,7 +2,6 @@
 
 from .github_issues import GitHubIssueClient
 from .issue_parser import IssueParser
-from .problem_generator import ProblemGenerator
 
 class GitHubCommands:
     """Commands for working with GitHub issues in aider."""
@@ -18,7 +17,6 @@ class GitHubCommands:
         self.coder = coder
         self.client = None
         self.parser = IssueParser()
-        self.generator = ProblemGenerator()
 
     def _ensure_client(self) -> None:
         """Ensure GitHub client is initialized."""
@@ -43,32 +41,42 @@ class GitHubCommands:
         self._ensure_client()
 
         # Fetch issue and comments
-        issue = self.client.get_repo_issues(
-            owner,
-            repo,
-            state="open"
-        )[0]
+        issue = self.client.get_issue(owner, repo, issue_number)
+        if not issue:
+            raise Exception(f"Issue {issue_number} not found")
 
         comments = []
         if with_comments:
             comments = self.client.get_issue_comments(owner, repo, issue_number)
 
-        # Parse and generate problem
+        # Parse issue and build instructions
         problem_def = self.parser.parse_issue(issue, comments)
-        aider_problem = self.generator.generate_problem(
-            problem_def,
-            additional_context={"repository": f"{owner}/{repo}"}
-        )
+        
+        # Build task description
+        instructions = f"{problem_def.title}\n\n"
+        if problem_def.description:
+            instructions += f"{problem_def.description}\n\n"
+            
+        # Add relevant context
+        if problem_def.context:
+            for key, value in problem_def.context.items():
+                if key in ['context', 'background']:
+                    instructions += f"\nBackground:\n{value}\n"
+                elif key == 'current behavior':
+                    instructions += f"\nCurrent Behavior:\n{value}\n"
+                elif key == 'additional_info':
+                    instructions += f"\nAdditional Information:\n{value}\n"
+                    
+        # Add repository context
+        instructions += f"\nRepository: {owner}/{repo}"
 
-        # Run aider on the problem
-        instructions = aider_problem.task
-        if aider_problem.context:
-            instructions = f"{aider_problem.context}\n\n{instructions}"
-        self.coder.run(with_message=instructions, preproc=False)
+        # Run aider with the instructions
+        self.coder.run(instructions)
 
-        # Track files that need attention
-        for file in aider_problem.files_to_modify:
-            self.coder.add_file(file)
+        # Add any referenced files
+        for ref in problem_def.code_references:
+            if ref.file:
+                self.coder.add_file(ref.file)
 
     def process_repo_issue(
         self,

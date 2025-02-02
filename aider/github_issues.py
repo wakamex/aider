@@ -599,3 +599,19 @@ class GitHubIssueClient:
         response = self.session.get(url)
         response.raise_for_status()
         return response.json()
+
+    def get_issue(self, owner: str, repo: str, issue_number: int) -> dict:
+        """Get a specific issue from a repository.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            issue_number: Issue number
+
+        Returns:
+            Issue data as a dict
+        """
+        url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}"
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.json()

@@ -2,6 +2,7 @@ import configparser
 import json
 import os
 import re
+import logging
 import sys
 import threading
 import traceback
@@ -36,6 +37,14 @@ from aider.versioncheck import check_version, install_from_main_branch, install_
 from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
+
+
+def setup_logging(log_level):
+    """Setup basic logging."""
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_level}")
+    logging.basicConfig(level=numeric_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def check_config_files_for_yes(config_files):
@@ -441,6 +450,13 @@ def sanity_check_repo(repo, io):
 
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
     report_uncaught_exceptions()
+
+    # Set up logging
+    try:
+        setup_logging(os.environ.get("AIDER_LOG_LEVEL", "WARNING"))
+    except ValueError as e:
+        print(f"Error setting up logging: {e}")
+        sys.exit(1)
 
     if argv is None:
         argv = sys.argv[1:]

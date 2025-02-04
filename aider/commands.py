@@ -1,3 +1,10 @@
+"""Commands available in the chat session."""
+
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Union
+
+from .github_issues import GitHubIssueClient
+
 import glob
 import os
 import re
@@ -22,9 +29,8 @@ from aider.repo import ANY_GIT_ERROR
 from aider.run_cmd import run_cmd
 from aider.scrape import Scraper, install_playwright
 from aider.utils import is_image_file
-
 from .dump import dump  # noqa: F401
-
+from .github_commands import GitHubCommands
 
 class SwitchCoder(Exception):
     def __init__(self, **kwargs):
@@ -32,8 +38,16 @@ class SwitchCoder(Exception):
 
 
 class Commands:
-    voice = None
-    scraper = None
+    """Commands available in the chat session."""
+
+    def __init__(self, io, coder):
+        """Initialize Commands."""
+        self.io = io
+        self.coder = coder
+        self.github_client = None
+        self.voice = None
+        self.scraper = None
+        self.github = None
 
     def clone(self):
         return Commands(
@@ -76,6 +90,7 @@ class Commands:
 
         self.help = None
         self.editor = editor
+        self.github = GitHubCommands(io, coder)
 
     def cmd_model(self, args):
         "Switch to a new LLM"
@@ -1451,6 +1466,490 @@ Just show me the edits I need to make.
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
 
+    def cmd_issue(self, args):
+        """Process a GitHub issue by number: /issue owner/repo#123 or /issue https://github.com/owner/repo/issues/123"""
+        if not args:
+            self.io.tool_error("Please provide an issue reference")
+            return
+
+        try:
+            # Handle URL format
+            if args.startswith(("http://", "https://")):
+                if "/issues/" not in args:
+                    self.io.tool_error("Invalid issue URL format")
+                    return
+                url, issue_number = args.rsplit("/issues/", 1)
+                self.github.process_repo_issue(url, int(issue_number))
+                return
+
+            # Handle owner/repo#number format
+            if "#" not in args:
+                self.io.tool_error("Invalid issue reference format")
+                return
+
+            repo_ref, issue_number = args.split("#", 1)
+            if "/" not in repo_ref:
+                self.io.tool_error("Invalid repository reference format")
+                return
+
+            owner, repo = repo_ref.split("/", 1)
+            self.github.process_issue(owner, repo, int(issue_number))
+
+        except ValueError as e:
+            self.io.tool_error(f"Error processing issue: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Unexpected error: {e}")
+
+    def cmd_issues(self, args):
+        """List open issues from a GitHub repository: /issues owner/repo or /issues https://github.com/owner/repo"""
+        if not args:
+            self.io.tool_error("Please provide a repository reference")
+            return
+
+        try:
+            # Initialize GitHub client if needed
+            self.github._ensure_client()
+
+            # Parse repository reference
+            if args.startswith(("http://", "https://")):
+                owner, repo = self.github.client.parse_repo_url(args)
+            else:
+                if "/" not in args:
+                    self.io.tool_error("Invalid repository reference format")
+                    return
+                owner, repo = args.split("/", 1)
+
+            # Fetch and display issues
+            issues = self.github.client.get_repo_issues(owner, repo, state="open")
+
+            if not issues:
+                self.io.tool_output("No open issues found")
+                return
+
+            self.io.tool_output(f"\nOpen issues in {owner}/{repo}:")
+            for issue in issues:
+                labels = [f"[{label['name']}]" for label in issue['labels']]
+                label_str = " ".join(labels)
+                self.io.tool_output(
+                    f"#{issue['number']} {issue['title']} {label_str}\n"
+                    f"  {issue['html_url']}"
+                )
+
+        except ValueError as e:
+            self.io.tool_error(f"Error listing issues: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Unexpected error: {e}")
+
+    def ensure_client(self):
+        """Ensure GitHub client is initialized."""
+        if not self.github_client:
+            self.github_client = GitHubIssueClient()
+        return self.github_client
+
+    def process_issue(self, owner: str, repo: str, issue_number: int):
+        """Process a GitHub issue."""
+        client = self.ensure_client()
+        issue = client.get_repo_issues(owner, repo, state="all")[0]  # Get specific issue
+        comments = client.get_issue_comments(owner, repo, issue_number)
+        return issue, comments
+
+    def process_repo_issue(self, repo_url: str, issue_number: int):
+        """Process an issue from a repository URL."""
+        client = self.ensure_client()
+        owner, repo = client.parse_repo_url(repo_url)
+        return self.process_issue(owner, repo, issue_number)
+
+    def cmd_issue(self, args: str) -> Optional[str]:
+        """Process a GitHub issue.
+
+        Usage:
+            /issue owner/repo#123
+            /issue https://github.com/owner/repo/issues/123
+        """
+        if not args:
+            return "Usage: /issue owner/repo#123 or /issue https://github.com/owner/repo/issues/123"
+
+        # Try URL format
+        if args.startswith("https://"):
+            try:
+                repo_url, issue_number = args.rsplit("/issues/", 1)
+                self.process_repo_issue(repo_url, int(issue_number))
+                return None
+            except (ValueError, TypeError):
+                return "Invalid issue URL format"
+
+        # Try owner/repo#number format
+        try:
+            repo, issue_number = args.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            self.process_issue(owner, repo, int(issue_number))
+            return None
+        except (ValueError, TypeError):
+            return "Invalid issue reference format"
+
+    def cmd_issues(self, args: str) -> Optional[str]:
+        """List open issues in a GitHub repository.
+
+        Usage:
+            /issues owner/repo
+            /issues https://github.com/owner/repo
+        """
+        if not args:
+            return "Usage: /issues owner/repo or /issues https://github.com/owner/repo"
+
+        client = self.ensure_client()
+
+        # Try URL format
+        if args.startswith("https://"):
+            try:
+                owner, repo = client.parse_repo_url(args)
+            except ValueError:
+                return "Invalid repository URL. Expected format: https://github.com/owner/repo"
+        else:
+            # Try owner/repo format
+            try:
+                owner, repo = args.split("/", 1)
+            except ValueError:
+                return "Invalid repository reference. Expected format: owner/repo"
+
+        issues = client.get_repo_issues(owner, repo)
+        if not issues:
+            return f"No open issues found in {owner}/{repo}"
+
+        return None
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
+
+    def cmd_comment(self, args: str) -> Optional[str]:
+        """Add a comment to a GitHub issue.
+
+        Usage:
+            /comment owner/repo#123 Your comment text
+            /comment https://github.com/owner/repo/issues/123 Your comment text
+        """
+        if not args:
+            return "Usage: /comment owner/repo#123 Your comment text"
+
+        # Split into reference and comment
+        try:
+            ref, comment = args.split(" ", 1)
+        except ValueError:
+            return "Please provide both an issue reference and comment text"
+
+        client = self.ensure_client()
+
+        # Handle URL format
+        if ref.startswith("https://"):
+            try:
+                repo_url, issue_number = ref.rsplit("/issues/", 1)
+                owner, repo = client.parse_repo_url(repo_url)
+                client.create_issue_comment(owner, repo, int(issue_number), comment)
+                return None
+            except (ValueError, TypeError):
+                return "Invalid issue URL format"
+
+        # Handle owner/repo#number format
+        try:
+            repo, issue_number = ref.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            client.create_issue_comment(owner, repo, int(issue_number), comment)
+            return None
+        except (ValueError, TypeError):
+            return "Invalid issue reference format"
+
+    def cmd_update(self, args: str) -> Optional[str]:
+        """Update a GitHub issue.
+
+        Usage:
+            /update owner/repo#123 --state closed
+            /update owner/repo#123 --title "New Title"
+            /update owner/repo#123 --body "New description"
+            /update owner/repo#123 --labels bug,feature
+        """
+        if not args:
+            return "Usage: /update owner/repo#123 [--state open|closed] [--title text] [--body text] [--labels label1,label2]"
+
+        # Parse arguments
+        parts = args.split()
+        ref = parts[0]
+
+        # Parse options
+        options = {
+            "draft": False,
+            "base": "main"
+        }
+        i = 1
+        while i < len(parts):
+            if not parts[i].startswith("--"):
+                return f"Unknown argument: {parts[i]}"
+
+            option = parts[i][2:]
+            if option not in ["title", "body", "base", "draft"]:
+                return f"Unknown option: {option}"
+
+            if option == "draft":
+                options["draft"] = True
+                i += 1
+                continue
+
+            if i + 1 >= len(parts):
+                return f"Missing value for option: {option}"
+
+            options[option] = parts[i + 1]
+            i += 2
+
+        if "title" not in options:
+            return "Title is required"
+
+        client = self.ensure_client()
+
+        try:
+            # Get repository info
+            if ref.startswith("https://"):
+                owner, repo = client.parse_repo_url(ref)
+            else:
+                try:
+                    owner, repo = ref.split("/", 1)
+                except ValueError:
+                    return "Invalid repository reference format"
+
+            # Get current branch
+            head = client.get_current_branch(owner, repo)
+
+            # Create PR
+            pr = client.create_pull_request(
+                owner=owner,
+                repo=repo,
+                title=options["title"],
+                head=head,
+                base=options["base"],
+                body=options.get("body"),
+                draft=options["draft"]
+            )
+
+            return f"Created PR: {pr['html_url']}"
+
+        except Exception as e:
+            return f"Failed to create PR: {str(e)}"
+
+    def cmd_pr(self, args: str) -> Optional[str]:
+        """Create a pull request.
+
+        Usage:
+            /pr owner/repo --title "Title" [--body "Description"] [--base main] [--draft]
+            /pr https://github.com/owner/repo --title "Title" [--body "Description"] [--base main] [--draft]
+        """
+        if not args:
+            return "Usage: /pr owner/repo --title \"Title\" [--body \"Description\"] [--base main] [--draft]"
+
+        import shlex
+        # Parse arguments preserving quotes
+        try:
+            parts = shlex.split(args)
+        except ValueError as e:
+            return f"Error parsing arguments: {str(e)}"
+
+        ref = parts[0]
+
+        # Parse options
+        options = {
+            "draft": False,
+            "base": "main"
+        }
+        i = 1
+        while i < len(parts):
+            if not parts[i].startswith("--"):
+                return f"Unknown argument: {parts[i]}"
+
+            option = parts[i][2:]
+            if option not in ["title", "body", "base", "draft"]:
+                return f"Unknown option: {option}"
+
+            if option == "draft":
+                options["draft"] = True
+                i += 1
+                continue
+
+            if i + 1 >= len(parts):
+                return f"Missing value for option: {option}"
+
+            options[option] = parts[i + 1]
+            i += 2
+
+        if "title" not in options:
+            return "Title is required"
+
+        client = self.ensure_client()
+
+        try:
+            # Get repository info
+            if ref.startswith("https://"):
+                owner, repo = client.parse_repo_url(ref)
+            else:
+                try:
+                    owner, repo = ref.split("/", 1)
+                except ValueError:
+                    return "Invalid repository reference format"
+
+            # Get current branch
+            head = client.get_current_branch(owner, repo)
+
+            # Create PR
+            pr = client.create_pull_request(
+                owner=owner,
+                repo=repo,
+                title=options["title"],
+                head=head,
+                base=options["base"],
+                body=options.get("body"),
+                draft=options["draft"]
+            )
+
+            return f"Created PR: {pr['html_url']}"
+
+        except Exception as e:
+            return f"Failed to create PR: {str(e)}"
+
+    def cmd_prupdate(self, args: str) -> Optional[str]:
+        """Update progress on a pull request.
+
+        Usage:
+            /prupdate owner/repo#123 Change description
+            /prupdate https://github.com/owner/repo/pull/123 Change description
+        """
+        if not args:
+            return "Usage: /prupdate owner/repo#123 Change description"
+
+        # Split into reference and change
+        try:
+            ref, change = args.split(" ", 1)
+        except ValueError:
+            return "Please provide both a PR reference and change description"
+
+        client = self.ensure_client()
+
+        # Handle URL format
+        if ref.startswith("https://"):
+            try:
+                repo_url, pr_number = ref.rsplit("/pull/", 1)
+                owner, repo = client.parse_repo_url(repo_url)
+                client.update_pr_progress(owner, repo, int(pr_number), [change])
+                return "PR progress updated"
+            except (ValueError, TypeError):
+                return "Invalid PR URL format"
+
+        # Handle owner/repo#number format
+        try:
+            repo, pr_number = ref.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            client.update_pr_progress(owner, repo, int(pr_number), [change])
+            return "PR progress updated"
+        except (ValueError, TypeError):
+            return "Invalid PR reference format"
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
+
+    def cmd_prcomment(self, args: str) -> Optional[str]:
+        """Add a comment to a pull request.
+
+        Usage:
+            /prcomment owner/repo#123 Your comment text
+            /prcomment https://github.com/owner/repo/pull/123 Your comment text
+        """
+        if not args:
+            return "Usage: /prcomment owner/repo#123 Your comment text"
+
+        # Split into reference and comment
+        try:
+            ref, comment = args.split(" ", 1)
+        except ValueError:
+            return "Please provide both a PR reference and comment text"
+
+        client = self.ensure_client()
+
+        # Handle URL format
+        if ref.startswith("https://"):
+            try:
+                repo_url, pr_number = ref.rsplit("/pull/", 1)
+                owner, repo = client.parse_repo_url(repo_url)
+                client.create_pr_comment(owner, repo, int(pr_number), comment)
+                return "Comment added to PR"
+            except (ValueError, TypeError):
+                return "Invalid PR URL format"
+
+        # Handle owner/repo#number format
+        try:
+            repo, pr_number = ref.split("#", 1)
+            owner, repo = repo.split("/", 1)
+            client.create_pr_comment(owner, repo, int(pr_number), comment)
+            return "Comment added to PR"
+        except (ValueError, TypeError):
+            return "Invalid PR reference format"
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
+
+    def cmd_personality(self, args: str) -> Optional[str]:
+        """Toggle personality feature or show status.
+
+        Usage:
+            /personality toggle  # Toggle personality on/off
+            /personality        # Show current status
+        """
+        if not self.github:
+            return "GitHub integration not initialized"
+
+        # Initialize if needed
+        self.github._ensure_client()
+        client = self.github.client
+
+        if not args:
+            status = "enabled" if client.personality.enabled else "disabled"
+            return f"Personality is currently {status}"
+
+        if args.strip() == "toggle":
+            client.personality.enabled = not client.personality.enabled
+            status = "enabled" if client.personality.enabled else "disabled"
+            return f"Personality is now {status}"
+
+        return "Usage: /personality [toggle]"
+
+    def get_commands(self):
+        commands = []
+        for attr in dir(self):
+            if not attr.startswith("cmd_"):
+                continue
+            cmd = attr[4:]
+            cmd = cmd.replace("_", "-")
+            commands.append("/" + cmd)
+
+        return commands
 
 def expand_subdir(file_path):
     if file_path.is_file():

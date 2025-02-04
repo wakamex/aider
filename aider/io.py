@@ -2,6 +2,7 @@ import base64
 import os
 import signal
 import time
+import logging
 import webbrowser
 from collections import defaultdict
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from rich.style import Style as RichStyle
 from rich.text import Text
 
 from aider.mdstream import MarkdownStream
+import logging
 
 from .dump import dump  # noqa: F401
 from .utils import is_image_file
@@ -291,6 +293,7 @@ class InputOutput:
 
         self.file_watcher = file_watcher
         self.root = root
+        self.logger = logging.getLogger(__name__)
 
     def _get_style(self):
         style_dict = {}
@@ -840,12 +843,42 @@ class InputOutput:
             message = str(message).encode("ascii", errors="replace").decode("ascii")
             self.console.print(message, **style)
 
+    def log(self, level, message, strip=True):
+        if message.strip():
+            if "\n" in message:
+                for line in message.splitlines():
+                    self.append_chat_history(line, linebreak=True, blockquote=True, strip=strip)
+            else:
+                hist = message.strip() if strip else message
+                self.append_chat_history(hist, linebreak=True, blockquote=True)
+
+        if not isinstance(message, Text):
+            message = Text(message)
+        style = dict()
+        try:
+            self.console.print(message, **style)
+        except UnicodeEncodeError:
+            # Fallback to ASCII-safe output
+            if isinstance(message, Text):
+                message = message.plain
+            message = str(message).encode("ascii", errors="replace").decode("ascii")
+            self.console.print(message, **style)
+
+        if level == "error":
+            self.logger.error(message)
+        elif level == "warning":
+            self.logger.warning(message)
+        elif level == "info":
+            self.logger.info(message)
+        elif level == "debug":
+            self.logger.debug(message)
+
     def tool_error(self, message="", strip=True):
         self.num_error_outputs += 1
-        self._tool_message(message, strip, self.tool_error_color)
+        self.log("error", message, strip)
 
     def tool_warning(self, message="", strip=True):
-        self._tool_message(message, strip, self.tool_warning_color)
+        self.log("warning", message, strip)
 
     def tool_output(self, *messages, log_only=False, bold=False):
         if messages:
@@ -865,6 +898,7 @@ class InputOutput:
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)
+        self.log("info", " ".join(map(str, messages)), strip=True)
 
     def get_assistant_mdstream(self):
         mdargs = dict(style=self.assistant_output_color, code_theme=self.code_theme)

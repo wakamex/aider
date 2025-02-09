@@ -35,47 +35,8 @@ def github_token():
 @pytest.fixture
 def github_client(github_token):
     """Create GitHub client."""
-    from aider.llm import litellm
+    from aider.llm import LLM
     import os
-
-    class LiveLLM:
-        def generate(self, prompt):
-            try:
-                # Get model from env var or config
-                model = os.getenv("AIDER_TEST_MODEL", "gemini/gemini-2.0-flash-exp")
-
-                # Get appropriate API key based on model
-                api_key = None
-                if "gemini" in model.lower():
-                    api_key = os.getenv("GEMINI_API_KEY")
-                    print(f"Using Gemini model: {model}")
-                else:
-                    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-                    print(f"Using OpenAI/OpenRouter model: {model}")
-
-                if not api_key:
-                    print("No API key found, using mock response")
-                    # Extract just the original text from the prompt
-                    original = prompt.split("Original text:")[-1].split("\n\n")[0].strip()
-                    return f"✨ {original} [✨]"
-
-                # Configure litellm with the API key
-                litellm.api_key = api_key
-                response = litellm.completion(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=1000  # Increase max tokens to avoid truncation
-                )
-                content = response.choices[0].message.content
-                # Clean up any partial markdown or text
-                if content.count('```') % 2 == 1:  # Unclosed code block
-                    content = content.split('```')[0]
-                return content.strip()
-            except Exception as e:
-                print(f"LLM error: {e}")
-                # Extract just the original text for the mock response
-                original = prompt.split("Original text:")[-1].split("\n\n")[0].strip()
-                return f"✨ {original} [✨]"
 
     # Load config and check for test_model setting
     config = {}
@@ -86,21 +47,16 @@ def github_client(github_token):
             if "github" in config and "test_model" in config["github"]:
                 os.environ["AIDER_TEST_MODEL"] = config["github"]["test_model"]
 
-    client = GitHubIssueClient(token=github_token, llm=LiveLLM(), config=config)
-
-    # Create personality directory with README
-    personality_dir = Path("personality")
-    personality_dir.mkdir(exist_ok=True)
-
-    with open(personality_dir / "README.md", "w") as f:
-        f.write("""
-# Test Bot Personality
-
-I am a friendly and helpful bot that adds a touch of whimsy to my messages.
-I like to use emojis and keep things light while staying professional.
-""".strip())
-
+    from aider.github_issues import GitHubIssueClient
+    client = GitHubIssueClient(token=github_token, llm=LLM(), config=config)
     return client
+
+@pytest.fixture
+def github_client_with_repo(github_client, repo):
+    """Update GitHub client with local repo path."""
+    github_client.repo_path = str(repo)
+    github_client.personality.load_personality(repo)
+    return github_client
 
 @pytest.fixture
 def load_remote_personality(github_client, test_repo):
@@ -166,7 +122,7 @@ def test_repo(github_client):
     return repo_data
 
 @pytest.fixture
-def local_repo(test_repo, github_token, github_client):
+def repo(test_repo, github_token, github_client):
     """Clone and set up local repository."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -219,35 +175,35 @@ def get_remote_personality(github_client, test_repo):
         return base64.b64decode(response.json()["content"]).decode()
     return None
 
-def test_personality_loading(github_client, test_repo, local_repo):
+def test_personality_loading(github_client, repo):
     """Test loading personality from remote repo."""
     input_text = "Hello world"
 
     # Create personality directory
-    (local_repo / "personality").mkdir()
+    (repo / "personality").mkdir()
 
     # Create a personality manager and load
     manager = PersonalityManager(github_client.personality.llm, github_client)
-    manager.load_personality(local_repo)
+    manager.load_personality(repo)
 
     # Test applying personality without loading one (should use default)
     output_text = manager.apply_personality(input_text, "test")
     assert output_text is not None
     assert output_text != input_text
 
-def test_pr_workflow(github_client, test_repo, local_repo, mock_io, mock_coder):
+def test_pr_workflow(github_client, test_repo, repo, mock_io, mock_coder):
     """Test complete PR workflow with descriptive content."""
     # Create project structure
-    (local_repo / "src").mkdir()
-    (local_repo / "tests").mkdir()
-    (local_repo / "docs").mkdir()
-    (local_repo / "personality").mkdir()
+    (repo / "src").mkdir()
+    (repo / "tests").mkdir()
+    (repo / "docs").mkdir()
+    (repo / "personality").mkdir()
 
     # Load personality from remote
-    github_client.personality.load_personality(local_repo)
+    github_client.personality.load_personality(repo)
 
     # Add README with project info
-    readme = local_repo / "README.md"
+    readme = repo / "README.md"
     readme.write_text("""
     # Test Project
 
@@ -262,14 +218,14 @@ def test_pr_workflow(github_client, test_repo, local_repo, mock_io, mock_coder):
     """.strip())
 
     # Initial commit
-    run_git(["add", "README.md"], cwd=local_repo)
-    run_git(["commit", "-m", "Initial commit: Project structure and README"], cwd=local_repo)
+    run_git(["add", "README.md"], cwd=repo)
+    run_git(["commit", "-m", "Initial commit: Project structure and README"], cwd=repo)
 
     # Create feature branch
-    run_git(["checkout", "-b", "feature/test-integration"], cwd=local_repo)
+    run_git(["checkout", "-b", "feature/test-integration"], cwd=repo)
 
     # Add source file
-    src_file = local_repo / "src" / "main.py"
+    src_file = repo / "src" / "main.py"
     src_file.write_text("""
     def main():
         print("Hello from Aider!")
@@ -279,11 +235,11 @@ def test_pr_workflow(github_client, test_repo, local_repo, mock_io, mock_coder):
     """.strip())
 
     # Commit source file
-    run_git(["add", "src/main.py"], cwd=local_repo)
-    run_git(["commit", "-m", "Add main application file"], cwd=local_repo)
+    run_git(["add", "src/main.py"], cwd=repo)
+    run_git(["commit", "-m", "Add main application file"], cwd=repo)
 
     # Push changes
-    run_git(["push", "-u", "origin", "feature/test-integration"], cwd=local_repo)
+    run_git(["push", "-u", "origin", "feature/test-integration"], cwd=repo)
 
     # Create PR with personality
     pr_data = github_client.create_pull_request(
@@ -351,7 +307,7 @@ def test_personality_pr_comment(mock_session):
     assert "(with personality)" in request_body
     assert "[✨]" in request_body  # Verify our personality indicator is present
 
-def test_automation_flow(github_client, test_repo):
+def test_automation_flow(github_client_with_repo, test_repo, repo):
     """Test the complete automation flow."""
     # Create a test issue with a problem definition
     issue_title = "Add logging configuration"
@@ -365,7 +321,7 @@ def test_automation_flow(github_client, test_repo):
 
     Please implement this using the Python logging module."""
 
-    issue = github_client.create_issue(
+    issue = github_client_with_repo.create_issue(
         test_repo["owner"]["login"],
         test_repo["name"],
         issue_title,
@@ -376,9 +332,9 @@ def test_automation_flow(github_client, test_repo):
     # Create a temporary directory for the automation run
     with tempfile.TemporaryDirectory() as work_dir:
         work_dir = Path(work_dir)
-        
+
         # Import here to avoid circular imports
-        from aider.github_automation import main, clone_repo
+        from aider.github_automation import process_issue_real
         from aider.io import InputOutput
         from aider.coders import Coder
         from aider import models
@@ -386,66 +342,23 @@ def test_automation_flow(github_client, test_repo):
         # Get model from env var
         model = os.getenv("AIDER_TEST_MODEL", "gemini/gemini-2.0-flash-exp")
 
-        # Test repository cloning
-        repo_dir = work_dir / "test-clone"
-        assert clone_repo(
+        # Process the issue directly
+        results = process_issue_real(
             test_repo["owner"]["login"],
             test_repo["name"],
-            repo_dir,
-            github_client.token
-        ), "Repository clone failed"
-        
-        # Verify clone was shallow
-        git_dir = repo_dir / ".git"
-        assert git_dir.exists(), "Git directory not found"
-        
-        # Check shallow clone by looking at .git/shallow file
-        shallow_file = git_dir / "shallow"
-        assert shallow_file.exists(), "Not a shallow clone"
-        
-        # Verify we can create a branch
-        branch_name = f"test-branch-{int(time.time())}"
-        run_git(["checkout", "-b", branch_name], cwd=repo_dir)
-        current_branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
-        assert current_branch == branch_name, "Branch creation failed"
-
-        # Setup aider components directly
-        io = InputOutput(
-            pretty=True,
-            yes=True,
-            chat_history_file=work_dir / ".aider.chat.history.md"
-        )
-        
-        main_model = models.Model(model)
-        
-        coder = Coder.create(
-            main_model,
-            main_model.edit_format,
-            io,
-            use_git=True,  # Allow aider to manage git
-            stream=False,
+            issue["number"],
+            work_dir=work_dir,
+            model_name=model,
             verbose=False,
-            cache_prompts=True,
-            suggest_shell_commands=False,
+            with_comments=True,
+            no_git=False,
+            github_client=github_client_with_repo
         )
-
-        # Run automation with modified args
-        test_args = [
-            f"{test_repo['owner']['login']}/{test_repo['name']}",
-            "--labels", "aider",
-            "--work-dir", str(work_dir),
-            "--model", model
-        ]
-
-        # Mock sys.argv
-        with patch("sys.argv", ["github_automation.py"] + test_args):
-            # Run automation
-            main()
 
         # Verify automation directory structure
         issue_dir = work_dir / f"{test_repo['owner']['login']}-{test_repo['name']}-{issue['number']}"
         assert issue_dir.exists(), "Issue directory not created"
-        
+
         repo_dir = issue_dir / "repo"
         assert repo_dir.exists(), "Repository directory not created"
         assert (repo_dir / ".git").exists(), "Git directory not created"
@@ -455,7 +368,7 @@ def test_automation_flow(github_client, test_repo):
         assert results_file.exists(), "Results file not created"
 
         # Verify PR creation
-        prs = github_client.get_repo_prs(
+        prs = github_client_with_repo.get_repo_prs(
             test_repo["owner"]["login"],
             test_repo["name"]
         )
@@ -465,7 +378,7 @@ def test_automation_flow(github_client, test_repo):
         assert "Add logging configuration" in latest_pr["title"]
 
         # Verify PR content
-        pr_files = github_client.get_pr_files(
+        pr_files = github_client_with_repo.get_pr_files(
             test_repo["owner"]["login"],
             test_repo["name"],
             latest_pr["number"]

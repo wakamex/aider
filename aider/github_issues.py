@@ -35,13 +35,16 @@ def merge_configs(base: Dict, update: Dict) -> Dict:
     return result
 
 class PersonalityManager:
-    """Manages personality-driven content for GitHub interactions."""
+    """Manages personality-driven content for GitHub interactions.
+    
+    Personality is loaded from the account's "personality" repository on GitHub.
+    """
 
-    def __init__(self, llm=None, github_client=None):
-        self.llm = llm
+    def __init__(self, github_client=None):
         self.personality = None
         self.enabled = True  # Can be toggled via config
         self.github_client = github_client
+        
 
     def load_personality(self, repo_path: Path):
         """Load personality from user's remote personality repo."""
@@ -51,22 +54,28 @@ class PersonalityManager:
 
         try:
             owner = self.github_client.get_current_user()["login"]
-            logging.info(f"Trying to load remote personality from {owner}/personality")
-            response = self.github_client.session.get(f"{GITHUB_API_URL}/repos/{owner}/personality/contents/README.md")
+            personality_url = f"{GITHUB_API_URL}/repos/{owner}/personality/contents/README.md"
+            logging.info(f"Trying to load remote personality from {personality_url=}")
+            response = self.github_client.session.get(personality_url)
             if response.status_code == 200:
                 import base64
-                self.personality = base64.b64decode(response.json()["content"]).decode().strip()
-                logging.info(f"Successfully loaded remote personality")
+                content = response.json()
+                if content and "content" in content:
+                    self.personality = base64.b64decode(content["content"]).decode().strip()
+                    logging.info(f"Successfully loaded remote personality")
+                else:
+                    logging.info("Failed to get personality content from response")
             else:
                 logging.info(f"Failed to get remote personality: {response.status_code}")
         except Exception as e:
             logging.info(f"Failed to load remote personality: {e}")
 
-    def apply_personality(self, text: str, context: str = "") -> str:
+    def apply_personality(self, text: str, llm=None, context: str = "") -> str:
         """Apply personality to text if enabled and available.
 
         Args:
             text: Original text content
+            llm: LLM instance to use for generating personality text
             context: Type of content (e.g. 'PR comment', 'issue update')
 
         Returns:
@@ -75,14 +84,17 @@ class PersonalityManager:
         logging.info(f"\nDebug: PersonalityManager.apply_personality")
         logging.info(f"Enabled: {self.enabled}")
         logging.info(f"Has personality: {bool(self.personality)}")
-        logging.info(f"Has LLM: {bool(self.llm)}")
 
-        if not self.enabled or not self.personality or not self.llm:
-            logging.info("Skipping personality - not enabled, no personality loaded, or no LLM")
+        if not self.enabled or not self.personality:
+            logging.info("Skipping personality - not enabled or no personality loaded")
             return text
 
         # Remove any existing personality markers
         text = re.sub(r'\s*\[✨\]\s*$', '', text.strip())
+
+        if not llm:
+            logging.info("No LLM provided, returning original text")
+            return text
 
         try:
             # Create prompt for LLM
@@ -99,7 +111,7 @@ class PersonalityManager:
             """
 
             logging.info(f"\nDebug: Sending prompt to LLM:\n{prompt}")
-            response = self.llm.generate(prompt)
+            response = llm.generate(prompt)
             logging.info(f"\nDebug: LLM response:\n{response}")
 
             response = response.split("\n")[0].strip()
@@ -123,7 +135,8 @@ class GitHubIssueClient:
         """
         self.config = DEFAULT_CONFIG.copy()
         self.repo_path = repo_path
-        self.personality = PersonalityManager(llm, self)
+        self.llm = llm
+        self.personality = PersonalityManager(self)
 
         # Try to load config from .aider.conf.yml
         conf_path = Path(".aider.conf.yml")
@@ -255,7 +268,7 @@ class GitHubIssueClient:
             Created comment data
         """
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
-        body = self.personality.apply_personality(body, context="issue comment")
+        body = self.personality.apply_personality(body, llm=self.llm, context="issue comment")
         data = {"body": body}
         response = self.session.post(url, json=data)
         response.raise_for_status()
@@ -292,7 +305,7 @@ class GitHubIssueClient:
         if title is not None:
             data["title"] = title
         if body is not None:
-            data["body"] = self.personality.apply_personality(body, context="issue update")
+            data["body"] = self.personality.apply_personality(body, llm=self.llm, context="issue update")
         if labels is not None:
             data["labels"] = labels
 
@@ -326,7 +339,7 @@ class GitHubIssueClient:
         """
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls"
         if body:
-            body = self.personality.apply_personality(body, context="PR description")
+            body = self.personality.apply_personality(body, llm=self.llm, context="PR description")
         data = {
             "title": title,
             "head": head,
@@ -358,7 +371,7 @@ class GitHubIssueClient:
         """
         # Use issues endpoint since PRs are issues
         url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        body = self.personality.apply_personality(body, context="PR comment")
+        body = self.personality.apply_personality(body, llm=self.llm, context="PR comment")
         data = {"body": body}
         response = self.session.post(url, json=data)
         response.raise_for_status()

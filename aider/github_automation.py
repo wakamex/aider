@@ -56,6 +56,7 @@ def process_issue_real(
     issue_number: int,
     work_dir: Path,
     model_name: str,
+    github_client=None,
     verbose: bool = False,
     with_comments: bool = True,
     no_git: bool = False,
@@ -75,7 +76,12 @@ def process_issue_real(
 
     try:
         # Initialize GitHub client
-        client = GitHubIssueClient()
+        if github_client is None:
+            github_client = GitHubIssueClient(repo_path=str(repo_dir))
+        else:
+            # Update repo path of existing client
+            github_client.repo_path = str(repo_dir)
+        client = github_client
 
         # Get issue details
         issue = client.get_issue(owner, repo, issue_number)
@@ -97,14 +103,32 @@ def process_issue_real(
         if not no_git:
             run_git(["checkout", "-b", branch_name], cwd=repo_dir)
 
-        # Set up aider components
-        io = InputOutput(
-            pretty=True,
-            yes=True,
-            chat_history_file=issue_dir / ".aider.chat.history.md"
-        )
+        # Create/update .gitignore to exclude aider files
+        gitignore_path = repo_dir / ".gitignore"
+        aider_patterns = [
+            ".aider*",
+            ".aider.*.cache*",
+        ]
+        gitignore_updated = False
+        if not gitignore_path.exists():
+            logging.info("Creating .gitignore")
+            with open(gitignore_path, "w") as f:
+                f.write("\n".join(aider_patterns) + "\n")
+            gitignore_updated = True
+        else:
+            logging.info("Updating .gitignore")
+            with open(gitignore_path, "r") as f:
+                existing = f.read()
+            missing = [p for p in aider_patterns if p not in existing]
+            if missing:
+                with open(gitignore_path, "a") as f:
+                    f.write("\n" + "\n".join(missing) + "\n")
+                gitignore_updated = True
 
-        main_model = models.Model(model_name)
+        # Stage .gitignore if it was created or updated
+        if gitignore_updated and not no_git:
+            logging.info("Staging .gitignore")
+            run_git(["add", ".gitignore"], cwd=repo_dir)
 
         # Change to repo directory before creating coder
         logging.info(f"Changing to directory: {repo_dir}")
@@ -113,6 +137,15 @@ def process_issue_real(
         # Configure git user before coder tries to commit
         logging.info("Configuring git user")
         client.configure_git_user(repo_dir)
+
+        # Set up aider components
+        io = InputOutput(
+            pretty=True,
+            yes=True,
+            chat_history_file=issue_dir / ".aider.chat.history.md"
+        )
+
+        main_model = models.Model(model_name)
 
         coder = Coder.create(
             main_model,
@@ -138,35 +171,35 @@ def process_issue_real(
         status = run_git(["status", "--porcelain"], cwd=repo_dir)
         logging.info(f"Git status: {status}")
 
-        # Check for both tracked and untracked changes
-        has_changes = bool(status) and any(line.strip() for line in status.splitlines())
-        logging.info(f"Has changes: {has_changes}, no_git: {no_git}")
-        if has_changes:
-            # Stage and commit changes
-            if not no_git:
-                # Add all changes including untracked files
-                logging.info("Adding changes")
-                run_git(["add", "-A"], cwd=repo_dir)
-                commit_msg = f"Fix issue #{issue_number}: {issue['title']}\n\nFixes #{issue_number}"
-                logging.info("Committing changes")
-                run_git(["commit", "-m", commit_msg], cwd=repo_dir)
+        # Handle any remaining unstaged changes
+        has_unstaged = bool(status) and any(line.strip() for line in status.splitlines())
+        logging.info(f"Has unstaged changes: {has_unstaged}, no_git: {no_git}")
+        if has_unstaged and not no_git:
+            # Add all changes including untracked files
+            logging.info("Adding changes")
+            run_git(["add", "-A"], cwd=repo_dir)
+            commit_msg = f"Fix issue #{issue_number}: {issue['title']}\n\nFixes #{issue_number}"
+            logging.info("Committing changes")
+            run_git(["commit", "-m", commit_msg], cwd=repo_dir)
 
-                # Push changes
-                logging.info("Pushing changes")
-                run_git(["push", "-u", "origin", branch_name], cwd=repo_dir)
+        # Push and create PR if we're using git
+        if not no_git:
+            # Push changes
+            logging.info("Pushing changes")
+            run_git(["push", "-u", "origin", branch_name], cwd=repo_dir)
 
-                # Create pull request
-                logging.info("Creating pull request")
-                pr = client.create_pull_request(
-                    owner,
-                    repo,
-                    title=f"Fix issue #{issue_number}: {issue['title']}",
-                    body=f"Fixes #{issue_number}",
-                    head=branch_name,
-                    base="main"
-                )
-                results["pull_request"] = pr
-                logging.info(f"Created PR: {pr}")
+            # Create pull request
+            logging.info("Creating pull request")
+            pr = client.create_pull_request(
+                owner,
+                repo,
+                title=f"Fix issue #{issue_number}: {issue['title']}",
+                body=f"Fixes #{issue_number}",
+                head=branch_name,
+                base="main"
+            )
+            results["pull_request"] = pr
+            logging.info(f"Created PR: {pr['html_url']}")
 
         results["success"] = True
 
@@ -230,6 +263,7 @@ def main():
             issue["number"],
             args.work_dir,
             args.model,
+            github_client=client,
             verbose=args.verbose,
             no_git=args.no_git
         )

@@ -77,17 +77,17 @@ def test_github_client_init():
     client = GitHubIssueClient(token="test_token")
     assert client.token == "test_token"
     assert client.config == DEFAULT_CONFIG
-    
+
     # Test with environment variable
     with patch.dict(os.environ, {"GITHUB_TOKEN": "env_token"}):
         client = GitHubIssueClient()
         assert client.token == "env_token"
-    
+
     # Test with config provided
     client = GitHubIssueClient(token="test_token", config={"rate_limit": {"max_per_page": 50}})
     assert client.config["rate_limit"]["max_per_page"] == 50
     assert client.config["rate_limit"]["default_per_page"] == DEFAULT_CONFIG["rate_limit"]["default_per_page"]
-    
+
     # Test without token
     with pytest.raises(ValueError) as exc:
         GitHubIssueClient()
@@ -96,22 +96,22 @@ def test_github_client_init():
 def test_github_client_config_file():
     """Test GitHub client configuration from file."""
     mock_file = mock_open(read_data=yaml.dump(MOCK_CONFIG))
-    
+
     with patch("pathlib.Path.exists") as mock_exists:
         with patch("builtins.open", mock_file):
             mock_exists.return_value = True
-            
+
             # Test loading config from file
             with patch.dict(os.environ, clear=True):  # Clear env vars
                 client = GitHubIssueClient()
                 assert client.token == "config_token"
                 assert client.config["rate_limit"]["max_per_page"] == 50
                 assert client.config["rate_limit"]["default_per_page"] == 20
-            
+
             # Test token precedence (direct > env > config)
             client = GitHubIssueClient(token="direct_token")
             assert client.token == "direct_token"
-            
+
             with patch.dict(os.environ, {"GITHUB_TOKEN": "env_token"}):
                 client = GitHubIssueClient()
                 assert client.token == "env_token"
@@ -127,7 +127,7 @@ def test_github_rate_limit(mock_github_client):
             }
         }
     }
-    
+
     rate_limit = mock_github_client.get_rate_limit()
     assert rate_limit["resources"]["core"]["limit"] == 5000
 

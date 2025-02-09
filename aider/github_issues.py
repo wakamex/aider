@@ -44,6 +44,7 @@ class PersonalityManager:
         self.personality = None
         self.enabled = True  # Can be toggled via config
         self.github_client = github_client
+        self.llm = github_client.llm if github_client else None
         
 
     def load_personality(self, repo_path: Path):

@@ -3,8 +3,6 @@
 import argparse
 import json
 import logging
-import os
-import sys
 import time
 from pathlib import Path
 
@@ -63,7 +61,7 @@ def process_new_issues(
     for issue in issues:
         issue_num = issue["number"]
         if issue_num not in processed:
-            logging.info(f"Processing new issue #{issue_num}: {issue['title']}")
+            logging.info("Processing new issue #%d: %s", issue_num, issue['title'])
             try:
                 process_issue(
                     owner,
@@ -75,9 +73,9 @@ def process_new_issues(
                 )
                 processed.add(issue_num)
                 save_processed_issues(work_dir, processed)
-                logging.info(f"Successfully processed issue #{issue_num}")
+                logging.info("Successfully processed issue #%d", issue_num)
             except Exception as e:
-                logging.error(f"Failed to process issue #{issue_num}: {e}")
+                logging.error("Failed to process issue #%d: %s", issue_num, e)
 
 def main():
     """Main daemon loop for processing GitHub issues."""
@@ -133,8 +131,8 @@ def main():
     client = GitHubIssueClient()
 
     logging.info(
-        f"Starting GitHub daemon for {owner}/{repo}"
-        f" (poll: {args.poll_interval}s, labels: {labels or 'all'})"
+        "Starting GitHub daemon for %s/%s (poll: %ds, labels: %s)",
+        owner, repo, args.poll_interval, labels or 'all'
     )
 
     while True:
@@ -155,7 +153,7 @@ def main():
             break
 
         except Exception as e:
-            logging.error(f"Error in main loop: {e}")
+            logging.error("Error in main loop: %s", e)
             time.sleep(args.error_wait)
 
 if __name__ == "__main__":

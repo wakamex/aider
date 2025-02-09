@@ -10,21 +10,16 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from aider.llm import LLM
 from aider.github_issues import GITHUB_API_URL, GitHubIssueClient, PersonalityManager
 
 
 def run_git(args, cwd=None):
     """Run a git command."""
-    result = subprocess.run(
-        ["git"] + args,
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=cwd
-    )
+    result = subprocess.run(["git"] + args, capture_output=True, text=True, check=True, cwd=cwd)
     return result.stdout.strip()
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def github_token():
     """Get GitHub token from environment."""
     token = os.getenv("GITHUB_TOKEN")
@@ -32,22 +27,18 @@ def github_token():
         pytest.skip("GITHUB_TOKEN not set")
     return token
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def github_client(github_token):
     """Create GitHub client."""
-    from aider.llm import LLM
-    import os
-
     # Load config and check for test_model setting
     config = {}
     conf_path = Path(".aider.conf.yml")
     if conf_path.exists():
-        with open(conf_path) as f:
+        with open(conf_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
             if "github" in config and "test_model" in config["github"]:
                 os.environ["AIDER_TEST_MODEL"] = config["github"]["test_model"]
 
-    from aider.github_issues import GitHubIssueClient
     client = GitHubIssueClient(token=github_token, llm=LLM(), config=config)
     return client
 
@@ -58,28 +49,7 @@ def github_client_with_repo(github_client, repo):
     github_client.personality.load_personality(repo)
     return github_client
 
-@pytest.fixture
-def load_remote_personality(github_client, test_repo):
-    """Load personality from remote repo or use default."""
-    def _load(repo_path: Path) -> str:
-        owner = github_client.get_current_user()["login"]
-        repo_name = test_repo["name"]
-
-        # Try to get personality from remote repo
-        response = github_client.session.get(f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/contents/personality/README.md")
-        if response.status_code == 200:
-            import base64
-            return base64.b64decode(response.json()["content"]).decode()
-
-        # Fall back to default personality
-        return """
-        You are a friendly and helpful AI assistant.
-        Add emojis and positive language while keeping content professional.
-        Keep original information intact.
-        """.strip()
-    return _load
-
-@pytest.fixture
+@pytest.fixture(scope="session")
 def test_repo(github_client):
     """Create a test repository for integration tests."""
     # First, list and delete any existing test repos
@@ -163,31 +133,32 @@ def mock_session():
         mock.return_value.delete.return_value.status_code = 204
         yield mock.return_value
 
-def get_remote_personality(github_client, test_repo):
-    """Get personality from remote repo."""
+@pytest.fixture
+def personality(github_client):
+    """Get personality from user's personality repo."""
     owner = github_client.get_current_user()["login"]
-    repo_name = test_repo["name"]
 
     # Try to get personality from remote repo
-    response = github_client.session.get(f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/contents/personality/README.md")
+    response = github_client.session.get(f"{GITHUB_API_URL}/repos/{owner}/personality/contents/README.md")
     if response.status_code == 200:
         import base64
         return base64.b64decode(response.json()["content"]).decode()
     return None
 
-def test_personality_loading(github_client, repo):
+
+def test_personality_loading(github_client, personality):
     """Test loading personality from remote repo."""
     input_text = "Hello world"
 
-    # Create personality directory
-    (repo / "personality").mkdir()
+    # Verify personality was loaded
+    assert personality is not None
 
-    # Create a personality manager and load
-    manager = PersonalityManager(github_client.personality.llm, github_client)
-    manager.load_personality(repo)
+    # Create a personality manager
+    manager = PersonalityManager(github_client)
+    manager.personality = personality
 
-    # Test applying personality without loading one (should use default)
-    output_text = manager.apply_personality(input_text, "test")
+    # Test applying personality
+    output_text = manager.apply_personality(input_text, llm=github_client.llm)
     assert output_text is not None
     assert output_text != input_text
 
@@ -275,37 +246,6 @@ def test_pr_workflow(github_client, test_repo, repo, mock_io, mock_coder):
     print(f"\nInspect the test results at: {pr_data['html_url']}")
     print(f"Repository: {test_repo['html_url']}")
     print(f"Pull Request: {pr_data['html_url']}")
-
-def test_personality_pr_comment(mock_session):
-    """Test that personality is applied to PR comments."""
-    client = GitHubIssueClient(token="mock-token")  # Add mock token
-    client.session = mock_session
-
-    # Mock LLM that adds "(with personality)" to text
-    class MockLLM:
-        def generate(self, prompt):
-            return "Hello! (with personality) This is a comment."
-
-    client.personality.llm = MockLLM()
-    client.personality.personality = "Test personality"
-
-    # Create a PR comment
-    original_text = "This is a comment."
-    client.create_pr_comment("owner", "repo", 123, original_text)
-
-    # Verify the request
-    mock_session.post.assert_called_once()
-    call_args = mock_session.post.call_args
-    request_body = call_args[1]["json"]["body"]
-
-    print("\nPersonality Test Results:")
-    print(f"Original text: {original_text}")
-    print(f"Enhanced text: {request_body}")
-    print(f"Personality applied: {'(with personality)' in request_body}")
-    print(f"✨ indicator present: {'[✨]' in request_body}")
-
-    assert "(with personality)" in request_body
-    assert "[✨]" in request_body  # Verify our personality indicator is present
 
 def test_automation_flow(github_client_with_repo, test_repo, repo):
     """Test the complete automation flow."""

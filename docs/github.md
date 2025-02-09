@@ -1,12 +1,23 @@
-# GitHub Integration
+# GitHub Integration Guide
 
-Aider provides seamless integration with GitHub through pull request creation, issue management, and customizable personalities.
+This guide covers both user features and development details of Aider's GitHub integration.
 
-## Personality
+## Architecture Overview
+
+The GitHub integration consists of three main components:
+
+1. `GitHubIssueClient` - Core API client for GitHub interactions
+2. GitHub commands in `Commands` class - User-facing commands
+3. Configuration management - Handles settings and credentials
+4. GitHub Daemon - Automated issue processing (optional)
+
+## User Features
+
+### Personality
 
 Aider can apply a custom personality to your GitHub interactions (PR descriptions, comments, etc). The personality is loaded from your personal `personality` repository on GitHub.
 
-### Setup
+#### Setup
 
 1. Create a repository named `personality` in your GitHub account
 2. Add a `README.md` file that describes your desired personality
@@ -22,41 +33,7 @@ You are a friendly and professional assistant who:
 
 ### Configuration
 
-You can control the personality feature through:
-
-1. Environment variable: `AIDER_PERSONALITY_ENABLED=true|false`
-2. Configuration file: `.aider.conf.yml`
-
-Example `.aider.conf.yml`:
-```yaml
-github:
-  personality:
-    enabled: true
-```
-
-### Testing
-
-To test the personality feature:
-
-1. Set up required environment variables (pick a good free model from `model_prices.py`):
-   ```bash
-   export GEMINI_API_KEY=your_api_key
-   export AIDER_TEST_MODEL=gemini/gemini-2.0-flash-exp
-   ```
-
-2. Run the integration tests:
-   ```bash
-   .venv/bin/python -m pytest tests/test_github_integration.py -r A --verbosity=2 --log-cli-level=INFO
-   ```
-
-The tests will create a temporary GitHub repository and verify that your personality is correctly applied to:
-- PR descriptions
-- Issue comments
-- Progress updates
-
-## Configuration
-
-### GitHub Token
+#### GitHub Token
 
 You can configure your GitHub token in three ways (in order of precedence):
 
@@ -68,146 +45,129 @@ Example `.aider.conf.yml`:
 ```yaml
 github:
   token: your_github_token
+  personality:
+    enabled: true
   rate_limit:
     max_per_page: 100
     default_per_page: 30
 ```
 
-## Commands
+### Commands
 
-### `/issue` - Process a Single Issue
+#### `/issue` - Process a Single Issue
 
-Process a specific GitHub issue by its number. Supports two formats:
-
-1. Repository shorthand:
+Process a specific GitHub issue by its number:
 ```
 /issue owner/repo#123
-```
-
-2. Full GitHub URL:
-```
 /issue https://github.com/owner/repo/issues/123
 ```
 
-### `/issues` - List Repository Issues
-
-List all open issues in a GitHub repository. Supports two formats:
-
-1. Repository shorthand:
+#### `/issues` - List Repository Issues
 ```
 /issues owner/repo
-```
-
-2. Full GitHub URL:
-```
 /issues https://github.com/owner/repo
 ```
 
-### `/comment` - Add a Comment to an Issue
-
-Add a comment to a specific GitHub issue:
-
-1. Repository shorthand:
+#### `/comment` - Add a Comment
 ```
 /comment owner/repo#123 Your comment text here
-```
-
-2. Full GitHub URL:
-```
 /comment https://github.com/owner/repo/issues/123 Your comment text here
 ```
 
-### `/update` - Update an Issue
-
-Update a GitHub issue's state, title, body, or labels:
-
+#### `/update` - Update an Issue
 ```
-# Close an issue
 /update owner/repo#123 --state closed
-
-# Update title
-/update owner/repo#123 --title "New Title"
-
-# Update description
-/update owner/repo#123 --body "New description"
-
-# Update labels
-/update owner/repo#123 --labels bug,feature
-
-# Multiple updates at once
-/update owner/repo#123 --state closed --labels done,fixed
+/update owner/repo#123 --title "New Title" --labels bug,feature
 ```
 
-You can also use the full GitHub URL format:
+#### `/pr` - Create a Pull Request
 ```
-/update https://github.com/owner/repo/issues/123 --state closed
-```
-
-### `/pr` - Create a Pull Request
-
-Create a pull request from your current branch:
-
-1. Repository shorthand:
-```
-# Basic PR
-/pr owner/repo --title "Add new feature"
-
-# PR with description
-/pr owner/repo --title "Add new feature" --body "Implemented feature X"
-
-# PR with custom base branch
-/pr owner/repo --title "Add new feature" --base develop
-
-# Draft PR
-/pr owner/repo --title "WIP: Add new feature" --draft
+/pr owner/repo --title "Add new feature" [--body "Description"] [--base main] [--draft]
 ```
 
-2. Full GitHub URL:
+#### `/prcomment` and `/prupdate` - PR Interactions
 ```
-/pr https://github.com/owner/repo --title "Add new feature"
-```
-
-The command will automatically use your current branch as the source branch.
-
-### `/prcomment` - Comment on a Pull Request
-
-Add a comment to an existing pull request:
-
-1. Repository shorthand:
-```
-/prcomment owner/repo#123 Your comment text here
+/prcomment owner/repo#123 Your comment here
+/prupdate owner/repo#123 Added new feature X  # Updates progress tracking comment
 ```
 
-2. Full GitHub URL:
-```
-/prcomment https://github.com/owner/repo/pull/123 Your comment text here
-```
+## GitHub Daemon
 
-### `/prupdate` - Update PR Progress
+The GitHub daemon (`scripts/github_daemon.py`) provides automated processing of GitHub issues.
 
-Add or update progress information on a pull request. This will maintain a single progress comment that gets updated with each change:
+### Features
+- Continuous monitoring of repository issues
+- Processes only new, unhandled issues
+- Label-based filtering
+- Configurable polling intervals
+- State persistence across restarts
+- Error handling and recovery
 
-1. Repository shorthand:
-```
-/prupdate owner/repo#123 Added new feature X
-```
+### Usage
 
-2. Full GitHub URL:
-```
-/prupdate https://github.com/owner/repo/pull/123 Fixed bug Y
-```
+```bash
+# Basic usage - monitor all issues
+.venv/bin/python scripts/github_daemon.py owner/repo
 
-The progress will be tracked in a single comment that gets updated with each change, including timestamps.
+# Monitor specific labels with custom poll interval
+.venv/bin/python scripts/github_daemon.py owner/repo \
+    --labels "bug,enhancement" \
+    --poll-interval 300
 
-## Rate Limiting
-
-Rate limits can be configured in `.aider.conf.yml`:
-
-```yaml
-github:
-  rate_limit:
-    max_per_page: 100    # Maximum items per page (max: 100)
-    default_per_page: 30 # Default items per page
+# With verbose logging
+.venv/bin/python scripts/github_daemon.py owner/repo --verbose
 ```
 
-The client will automatically respect these limits when making API requests.
+### Configuration
+
+Command line options:
+- `--work-dir`: Working directory (default: current)
+- `--model`: Model to use (default: gpt-3.5-turbo)
+- `--labels`: Only process issues with these labels
+- `--poll-interval`: Seconds between polls (default: 60)
+- `--error-wait`: Seconds to wait after error (default: 300)
+- `--verbose`: Enable verbose logging
+
+### State Management
+
+The daemon maintains a `.processed_issues.json` file to track which issues have been handled, ensuring:
+- No duplicate processing
+- State persistence across restarts
+- Safe concurrent operation
+
+## Development Details
+
+### GitHubIssueClient
+
+Core API client in `github_issues.py`:
+```python
+class GitHubIssueClient:
+    def get_repo_issues(self, owner: str, repo: str, ...) -> List[Dict]
+    def get_issue_comments(self, owner: str, repo: str, issue_number: int) -> List[Dict]
+```
+
+### Testing
+
+Three test categories:
+1. Client Tests: API interactions, rate limiting
+2. Command Tests: Command parsing, error handling
+3. Integration Tests: End-to-end functionality
+
+Run tests:
+```bash
+# Set up test environment
+export GEMINI_API_KEY=your_api_key
+export AIDER_TEST_MODEL=gemini/gemini-2.0-flash-exp
+
+# Run tests
+.venv/bin/python -m pytest tests/test_github_integration.py -r A --verbosity=2 --log-cli-level=INFO
+```
+
+### Contributing
+
+When adding features:
+1. Follow existing patterns
+2. Add comprehensive tests
+3. Update documentation
+4. Consider rate limiting
+5. Use type hints and docstrings

@@ -1,10 +1,4 @@
-# Aider GitHub Integration Guide
-
-## Usage examples
-
-implements simple request:
-![image](https://github.com/user-attachments/assets/091dcc0a-c3e0-4db1-8406-0f67dea2e59a)
-![image](https://github.com/user-attachments/assets/e09caf0d-f549-4744-8513-c5f8287a2da3)
+# GitHub Integration Guide
 
 This guide covers both user features and development details of Aider's GitHub integration.
 
@@ -173,7 +167,7 @@ export AIDER_TEST_MODEL=gemini/gemini-2.0-flash-exp
 
 When adding features:
 1. Follow existing patterns
-5. Use type hints and docstrings
 2. Add comprehensive tests
 3. Update documentation
 4. Consider rate limiting
+5. Use type hints and docstrings

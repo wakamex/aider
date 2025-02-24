@@ -2,6 +2,24 @@ import configparser
 import json
 import os
 import re
+import logging
+import sys
+import threading
+import traceback
+import webbrowser
+from dataclasses import fields
+from pathlib import Path
+
+try:
+    import git
+except ImportError:
+    git = None
+
+import importlib_resources
+from dotenv import load_dotenv
+from prompt_toolkit.enums import EditingMode
+
+import logging
 import sys
 import threading
 import traceback
@@ -36,6 +54,14 @@ from aider.versioncheck import check_version, install_from_main_branch, install_
 from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
+
+
+def setup_logging(log_level):
+    """Setup basic logging."""
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_level}")
+    logging.basicConfig(level=numeric_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def check_config_files_for_yes(config_files):
@@ -445,6 +471,9 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if argv is None:
         argv = sys.argv[1:]
 
+    # Set up logging
+    setup_logging(os.environ.get("AIDER_LOG_LEVEL", "WARNING"))
+
     if git is None:
         git_root = None
     elif force_git_root:
@@ -468,6 +497,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     default_config_files = list(map(str, default_config_files))
 
     parser = get_parser(default_config_files, git_root)
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        help="Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
     try:
         args, unknown = parser.parse_known_args(argv)
     except AttributeError as e:
@@ -487,6 +522,9 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     parser = get_parser(default_config_files, git_root)
 
     args, unknown = parser.parse_known_args(argv)
+
+    # Set up logging
+    setup_logging(args.log_level)
 
     # Load the .env file specified in the arguments
     loaded_dotenvs = load_dotenv_files(git_root, args.env_file, args.encoding)
